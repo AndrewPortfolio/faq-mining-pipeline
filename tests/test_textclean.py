@@ -1,0 +1,268 @@
+"""Tests for shared.textclean.
+
+These transforms *delete* text. An over-matching pattern raises nothing -- it
+just returns a shorter body, and the damage only shows up as worse clusters
+several stages later. So each transform is tested in both directions: that it
+cuts what it should, and that it leaves ordinary messages alone.
+
+Fixtures are synthetic. Real bodies carry customer names, addresses and phone
+numbers, and test files live in git forever.
+"""
+
+import pytest
+
+from shared.textclean import html_to_text, strip_quoted, unwrap_platform_lead
+
+
+# --- html_to_text ----------------------------------------------------------
+
+class TestHtmlToText:
+
+    def test_extracts_visible_text(self):
+        assert "Hello world" in html_to_text("<p>Hello world</p>")
+
+    def test_block_tags_become_line_breaks(self):
+        out = html_to_text("<p>First</p><p>Second</p>")
+        assert "First" in out and "Second" in out
+        assert "\n" in out, "block elements must not run together"
+
+    def test_inline_tags_do_not_split_words(self):
+        assert "unbreakable" in html_to_text("<span>un</span><b>break</b>able")
+
+    def test_script_content_is_dropped(self):
+        out = html_to_text("<p>Keep</p><script>var secret = 1;</script>")
+        assert "Keep" in out
+        assert "secret" not in out
+
+    def test_style_content_is_dropped(self):
+        out = html_to_text("<style>.a{color:red}</style><p>Keep</p>")
+        assert "Keep" in out
+        assert "color" not in out
+
+    def test_entities_are_decoded(self):
+        out = html_to_text("<p>Ben &amp; Jerry&#39;s &lt;tag&gt;</p>")
+        assert "Ben & Jerry's" in out
+        assert "<tag>" in out
+
+    def test_plain_text_passes_through(self):
+        assert "no markup here" in html_to_text("no markup here")
+
+    def test_empty_input(self):
+        assert html_to_text("") == ""
+
+    @pytest.mark.parametrize("bad", [
+        "<p>unclosed",
+        "<<>>broken<",
+        "<p>text</p></div></div>",
+        "<a href='x'>link",
+    ])
+    def test_malformed_html_never_raises(self, bad):
+        html_to_text(bad)  # must not raise
+
+    def test_unclosed_style_suppresses_rest(self):
+        """Documents a known limitation rather than asserting it is desirable.
+
+        An unclosed <style> leaves the suppress counter raised, so everything
+        after it is dropped. Acceptable because such mail is nearly always
+        machine-generated, but if real messages start vanishing, look here.
+        """
+        assert "Important" not in html_to_text("<style>.a{}<p>Important</p>")
+
+
+# --- strip_quoted ----------------------------------------------------------
+
+class TestStripQuotedCuts:
+    """Things that must be removed."""
+
+    def test_gmail_reply_attribution(self):
+        out = strip_quoted(
+            "Yes, 3pm works for us.\n\n"
+            "On Mon, Sep 1, 2025 at 10:00 AM Someone wrote:\n"
+            "> what time should we arrive?"
+        )
+        assert out == "Yes, 3pm works for us."
+
+    def test_outlook_original_message(self):
+        out = strip_quoted(
+            "Confirmed for Saturday.\n\n"
+            "-----Original Message-----\nFrom: someone\nold thread"
+        )
+        assert out == "Confirmed for Saturday."
+
+    def test_forwarded_message(self):
+        out = strip_quoted("See below.\n\n---------- Forwarded message ---------\nstuff")
+        assert out == "See below."
+
+    def test_outlook_divider_rule(self):
+        out = strip_quoted("Short answer.\n\n" + "_" * 32 + "\nquoted thread")
+        assert out == "Short answer."
+
+    def test_quoted_lines_removed(self):
+        out = strip_quoted("My reply.\n> their line one\n> their line two")
+        assert out == "My reply."
+
+    def test_indented_quote_markers_removed(self):
+        out = strip_quoted("My reply.\n   > indented quote")
+        assert out == "My reply."
+
+    def test_rfc_signature_delimiter(self):
+        out = strip_quoted("Thanks!\n\n-- \nJane\nManager\n555-0100")
+        assert out == "Thanks!"
+
+    def test_mobile_signature(self):
+        out = strip_quoted("On my way.\n\nSent from my iPhone")
+        assert out == "On my way."
+
+    @pytest.mark.parametrize("footer", [
+        "This email was sent to you because you subscribed.",
+        "You are receiving this email because you signed up.",
+        "To unsubscribe, click here.",
+        "If you no longer wish to receive these, click here.",
+        "Please update your email notification settings.",
+        "View this email in your browser",
+        "All rights reserved.",
+        "© 2026 Some Company",
+    ])
+    def test_boilerplate_footers(self, footer):
+        out = strip_quoted(f"Real content here.\n\n{footer}")
+        assert out == "Real content here."
+
+    def test_cuts_at_earliest_marker(self):
+        """With several markers present, everything from the first one goes."""
+        out = strip_quoted(
+            "Keep this.\n\n-- \nsig\n\nOn Mon someone wrote:\n> quoted"
+        )
+        assert out == "Keep this."
+
+
+class TestStripQuotedPreserves:
+    """Things that must survive. Over-matching is the expensive failure."""
+
+    def test_ordinary_enquiry_untouched(self):
+        body = ("Hi, we are interested in booking a lion dance for our "
+                "wedding on March 3rd.\nCould you send pricing and let us "
+                "know your availability?\nThanks!")
+        assert strip_quoted(body) == body
+
+    def test_question_mentioning_on_and_wrote(self):
+        """'On' and 'wrote' in prose must not trigger the reply cut."""
+        body = "On Saturday we have 200 guests. I wrote down your number."
+        assert strip_quoted(body) == body
+
+    def test_greater_than_inside_a_line_is_not_a_quote(self):
+        body = "We need > 4 performers for the venue."
+        assert strip_quoted(body) == body
+
+    def test_double_dash_without_trailing_space_is_not_a_signature(self):
+        """The RFC delimiter is exactly '-- '; a bare '--' is ordinary text."""
+        body = "Package A -- includes two lions.\nPackage B -- includes four."
+        assert strip_quoted(body) == body
+
+    def test_short_body_survives(self):
+        assert strip_quoted("How much?") == "How much?"
+
+    def test_empty_input(self):
+        assert strip_quoted("") == ""
+
+    def test_only_quoted_content_yields_empty(self):
+        assert strip_quoted("> everything they said\n> more of it") == ""
+
+
+class TestStripQuotedNormalisation:
+
+    def test_runs_of_spaces_collapse(self):
+        assert strip_quoted("too      many     spaces") == "too many spaces"
+
+    def test_tabs_collapse(self):
+        assert strip_quoted("tab\t\tseparated") == "tab separated"
+
+    def test_blank_line_runs_collapse_to_one(self):
+        assert strip_quoted("a\n\n\n\n\nb") == "a\n\nb"
+
+    def test_surrounding_whitespace_stripped(self):
+        assert strip_quoted("\n\n  content  \n\n") == "content"
+
+    def test_single_newlines_preserved(self):
+        """Line structure inside a message carries meaning; keep it."""
+        assert strip_quoted("line one\nline two") == "line one\nline two"
+
+
+# --- unwrap_platform_lead --------------------------------------------------
+
+WEDDINGWIRE = "messages@weddingwire.com"
+
+LEAD = (
+    "Sample Person wants to learn more about your offerings! Check out their\n"
+    "message: \n\n Messaged You First \n\n"
+    "Do you have availability in June and what are your rates?\n\n"
+    "For: Example Troupe - Musicians\n\n"
+    "By replying, you agree that your messages may be monitored.\n"
+    "Privacy Policy [https://example.com/privacy]"
+)
+
+
+class TestUnwrapPlatformLead:
+
+    def test_extracts_only_the_customer_message(self):
+        out = unwrap_platform_lead(LEAD, WEDDINGWIRE)
+        assert out == "Do you have availability in June and what are your rates?"
+
+    def test_removes_all_wrapper_text(self):
+        out = unwrap_platform_lead(LEAD, WEDDINGWIRE)
+        for wrapper in ("wants to learn more", "Check out their", "By replying",
+                        "Privacy Policy", "Messaged You First", "For:"):
+            assert wrapper not in out
+
+    def test_regression_cuts_at_last_intro_not_first(self):
+        """Two intro phrases appear in one notification.
+
+        Cutting at the first left '! Check out their message:' in 125 real
+        bodies. The cut must happen at the last intro phrase.
+        """
+        out = unwrap_platform_lead(LEAD, WEDDINGWIRE)
+        assert not out.startswith("!")
+        assert "Check out" not in out
+
+    def test_non_platform_sender_untouched(self):
+        body = "Hi, do you have availability in June?"
+        assert unwrap_platform_lead(body, "customer@gmail.com") == body
+
+    def test_platform_lookalike_in_body_does_not_trigger(self):
+        """Matching is on the sender, never on body text."""
+        body = "I found you on weddingwire.com! Check out their message: hello"
+        assert unwrap_platform_lead(body, "customer@gmail.com") == body
+
+    def test_empty_sender_untouched(self):
+        body = "Check out their message: something"
+        assert unwrap_platform_lead(body, "") == body
+
+    def test_platform_sender_without_wrapper_untouched(self):
+        body = "A billing notice with no lead wrapper at all."
+        assert unwrap_platform_lead(body, WEDDINGWIRE) == body
+
+    def test_falls_back_to_full_text_when_inner_is_empty(self):
+        """Never return nothing; a wrapper with no message keeps the original."""
+        text = "Someone sent you a new message:\n\nFor: Example Troupe"
+        assert unwrap_platform_lead(text, WEDDINGWIRE) == text
+
+    @pytest.mark.parametrize("sender", [
+        "messages@weddingwire.com",
+        "noreply@weddingpro.com",
+        "leads@theknot.com",
+        "hello@thumbtack.com",
+        "info@gigsalad.com",
+    ])
+    def test_all_known_platforms_recognised(self, sender):
+        assert unwrap_platform_lead(LEAD, sender) != LEAD
+
+
+class TestPipelineOrder:
+    """unwrap runs before strip_quoted in build_row; the pair must compose."""
+
+    def test_unwrap_then_strip(self):
+        out = strip_quoted(unwrap_platform_lead(LEAD, WEDDINGWIRE))
+        assert out == "Do you have availability in June and what are your rates?"
+
+    def test_composition_is_safe_on_ordinary_mail(self):
+        body = "Hi, what is your pricing for a 20 minute performance?"
+        assert strip_quoted(unwrap_platform_lead(body, "customer@gmail.com")) == body
