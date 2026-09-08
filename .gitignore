@@ -1,0 +1,5 @@
+data/
+*.mbox
+*.npy
+
+__pycache__ 
