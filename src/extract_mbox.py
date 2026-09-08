@@ -69,6 +69,16 @@ _NOISE_DOMAIN_RE = re.compile(
     re.I,
 )
 
+# Lead platforms no longer used by the business. Their leads are real but come
+# as fixed intake forms whose questions are identical across every message, so
+# they cluster on the form rather than on anything a customer asked. Dropped
+# here rather than unwrapped because the account is dead: bark.com traffic runs
+# 2022-03-21 to 2022-05-31 and stops.
+#
+# NOT the same call as weddingwire.com, which is still active (2016-2026) and
+# whose leads are unwrapped by shared.textclean.unwrap_platform_lead instead.
+_RETIRED_PLATFORM_RE = re.compile(r"@(?:[\w-]+\.)?bark\.com$", re.I)
+
 # Verified against 800 MB of this export: 421 '^From ' lines, 421 matches,
 # zero false positives. Gmail writes the thread id as the envelope sender.
 ENVELOPE_RE = re.compile(rb"^From \d+@xxx ")
@@ -316,6 +326,7 @@ def is_automated(msg, sender: str) -> bool:
         _NOREPLY_RE.search(sender)
         or _NOISE_DOMAIN_RE.search(sender)
         or _MARKETING_DOMAIN_RE.search(sender)
+        or _RETIRED_PLATFORM_RE.search(sender)
     )
 
 
