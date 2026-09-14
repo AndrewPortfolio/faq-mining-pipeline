@@ -1,11 +1,9 @@
-"""Pure text-cleaning transforms shared across pipeline stages.
+#Pure text-cleaning transforms shared across pipeline stages
 
-Every function here takes a string and returns a string. Nothing in this module
-knows about email, MIME, or the filesystem, which is what makes it testable in
-isolation -- and it needs testing, because these transforms *delete* text. When
-one over-matches there is no exception, only a shorter body and quietly worse
-clusters several stages downstream.
-"""
+#Every function here takes a string and returns a string
+#Nothing in this module knows about email, MIME, or the filesystem
+
+#These delete text: an over-match raises no error, just a shorter body --> keep them tested
 
 from __future__ import annotations
 
@@ -13,7 +11,7 @@ import re
 from html.parser import HTMLParser
 
 
-# --- HTML to text ----------------------------------------------------------
+# HTML to text
 
 _BLOCK_TAGS = {
     "p", "div", "br", "tr", "li", "h1", "h2", "h3", "h4", "h5", "h6",
@@ -22,7 +20,7 @@ _BLOCK_TAGS = {
 
 
 class _HTMLToText(HTMLParser):
-    """Minimal stdlib HTML renderer. Enough for short emails, no dependency."""
+    #Minimal stdlib HTML renderer --> Enough for short emails, no dependency
 
     def __init__(self):
         super().__init__(convert_charrefs=True)
@@ -60,7 +58,7 @@ def html_to_text(html: str) -> str:
         return re.sub(r"<[^>]+>", " ", html)
     return parser.text()
 
-# --- Reply, signature and footer trimming ----------------------------------
+# Reply, signature and footer trimming
 
 _QUOTE_PATTERNS = [
     re.compile(r"^-{2,}\s*Original Message\s*-{2,}", re.I | re.M),
@@ -104,10 +102,11 @@ def _first_match(text: str, patterns) -> int:
     return cut
 
 
-# Lead-forwarding platforms wrap a short customer message in a large, constant
-# boilerplate shell. Left intact, that shell dominates the embedding and forces
-# every lead into one meaningless cluster, so we keep only the inner message.
-_LEAD_SENDER_RE = re.compile(r"@(?:weddingwire|weddingpro|theknot|thumbtack|gigsalad|bark)\.", re.I)
+# Lead platforms wrap a short customer message in the same large template
+# If the template was left in, every lead embeds as the 
+# template and they collapse into one meaningless cluster (non-FAQ)
+# This regex only picks which senders get unwrapped (see unwrap_platform_lead)
+_LEAD_SENDER_RE = re.compile(r"@(?:weddingwire|weddingpro)\.", re.I)
 
 _LEAD_INTRO_RE = re.compile(
     r"(?:check out their\s+message|sent you a new message|"
@@ -126,12 +125,11 @@ _LEAD_BADGE_RE = re.compile(
 
 
 def unwrap_platform_lead(text: str, sender: str) -> str:
-    """Pull the customer's own words out of a platform lead notification."""
+    #pull customer's written text out of platform lead notif 
     if not sender or not _LEAD_SENDER_RE.search(sender):
         return text
-    # Several intro phrases can appear in one notification ("... wants to learn
-    # more about your offerings! Check out their message:"). Cut at the last of
-    # them so no wrapper text survives into the body.
+    # Several intro phrases can appear in one notification
+    # Cut at the last one so no wrapper text survives into the body 
     matches = list(_LEAD_INTRO_RE.finditer(text))
     if not matches:
         return text
@@ -144,7 +142,7 @@ def unwrap_platform_lead(text: str, sender: str) -> str:
 
 
 def strip_quoted(text: str) -> str:
-    """Drop quoted replies and signature blocks; keep only what this sender wrote."""
+    #drop quoted replies/footers/signature blocks --> keep only what this sender wrote
     text = text[: _first_match(text, _QUOTE_PATTERNS)]
     text = text[: _first_match(text, _FOOTER_PATTERNS)]
     text = text[: _first_match(text, _SIG_PATTERNS)]
