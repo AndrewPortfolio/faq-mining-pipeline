@@ -7,7 +7,7 @@ chunking it, and generating embeddings for the RAG email/Instagram
 responder.
 
 ## How I Want Help (I'm a junior dev leveling up)
-- Explain the *why* for nontrivial choices, not just the *what* — No more than 1 sentence (keep it simple)
+- Explain the *why* for nontrivial choices, not the *what* — No more than 1 sentence (keep it simple)
     - If something needs more than 1 sentence than 2 is the hard max 
 - Name the alternative and the trade-off when one exists, don't just pick
   silently.

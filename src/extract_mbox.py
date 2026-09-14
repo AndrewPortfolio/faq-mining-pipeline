@@ -1,18 +1,11 @@
-#!/usr/bin/env python3
-"""Stage 0: stream a Gmail mbox export into compact JSONL shards.
-
-The export is ~98% base64 attachment payload. This pass walks the file once,
-discards those bytes without ever decoding them, and emits one JSON row per
-message into data/extracted/emails-NNNNN.jsonl.
-
-Everything here is specific to reading mbox. The parts later stages reuse --
-shard I/O, checkpointing, progress, text cleaning -- live in src/shared/.
-
-Usage:
-    python src/extract_mbox.py                 # full run, resumes if interrupted
-    python src/extract_mbox.py --limit 500     # quick smoke test
-    python src/extract_mbox.py --restart       # ignore checkpoint, start over
-"""
+# Stage 0 Cleaning stage: Gmail mbox --> JSONL shards 
+# Gmail mbox: ~98% of file is attachment payload 
+# This file gets rid of them and extracts the email messages into jsonl files 
+#data/extracted/emails-NNNNN.jsonl
+# Usage:
+#     python src/extract_mbox.py                 # full run, resumes if interrupted
+#     python src/extract_mbox.py --limit 500     # quick smoke test
+#     python src/extract_mbox.py --restart       # ignore checkpoint, start over
 
 from __future__ import annotations
 
@@ -32,62 +25,48 @@ from shared.pipeline import Checkpoint, Deduper, Progress, ShardWriter, Stats
 from shared.textclean import html_to_text, strip_quoted, unwrap_platform_lead
 
 
-# --- Configuration ---------------------------------------------------------
+# Configuration 
 
 DEFAULT_MBOX = "data/raw/All mail Including Spam and Trash.mbox"
 DEFAULT_OUTDIR = "data/extracted"
+#counts rows written 
 SHARD_SIZE = 2000
 
-# Gmail labels whose messages are dropped outright. Everything else is kept
-# with its labels intact so filtering stays possible downstream.
-DROP_LABELS = {"Spam", "Trash"}
 
-# A message carrying this label is our own outgoing mail.
+# Gmail labels 
+DROP_LABELS = {"Spam", "Trash"}
 SENT_LABEL = "Sent"
 
-# Automated/bulk mail detection. Header signals first -- List-Unsubscribe and
-# Precedence are what marketing and notification senders are actually required
-# to set, so they generalise far better than matching on body text.
+#Automated Emails 
 BULK_PRECEDENCE = {"bulk", "list", "junk", "auto_reply"}
-
 _NOREPLY_RE = re.compile(
     r"(?:^|[.\-_+])(?:no-?reply|do-?not-?reply|donotreply|notification[s]?|"
     r"mailer-daemon|postmaster|bounce[s]?|auto-?confirm|automailer)(?:[.\-_+]|@)",
     re.I,
 )
 
-# Marketing subdomains (e.g. info@marketing.moviepass.com). Kept narrow on
-# purpose: lead-forwarding platforms such as weddingwire.com send genuine
-# customer enquiries and must not be caught here.
+#Marketing emails --> kept narrow because of WeddingWire 
 _MARKETING_DOMAIN_RE = re.compile(
     r"@(?:marketing|mktg|campaigns?|promo|newsletter|news|clicks|links)\.", re.I)
 
-# Senders that are unambiguously machine traffic for this mailbox.
+# Senders that are unambiguously machine traffic for this mailbox
 _NOISE_DOMAIN_RE = re.compile(
     r"@(?:txt\.voice\.google\.com|.*\.bounces\.google\.com|facebookmail\.com|"
     r"parastorage\.com|wix-forms\.com|messaging\.squareup\.com)$",
     re.I,
 )
 
-# Lead platforms no longer used by the business. Their leads are real but come
-# as fixed intake forms whose questions are identical across every message, so
-# they cluster on the form rather than on anything a customer asked. Dropped
-# here rather than unwrapped because the account is dead: bark.com traffic runs
-# 2022-03-21 to 2022-05-31 and stops.
-#
-# NOT the same call as weddingwire.com, which is still active (2016-2026) and
-# whose leads are unwrapped by shared.textclean.unwrap_platform_lead instead.
+#Old leads --> don't use bark services anymore
+#WeddingWire is still active, so don't discard it 
 _RETIRED_PLATFORM_RE = re.compile(r"@(?:[\w-]+\.)?bark\.com$", re.I)
 
-# Verified against 800 MB of this export: 421 '^From ' lines, 421 matches,
-# zero false positives. Gmail writes the thread id as the envelope sender.
+#The start of each message thread ID in mbox (digits = Gmail thread ID)
 ENVELOPE_RE = re.compile(rb"^From \d+@xxx ")
 
+#counts messages read --> controls how often progress line is printed
 PROGRESS_EVERY = 2000
 
-
-# --- Part decoding ---------------------------------------------------------
-
+# Part decoding
 def decode_part(raw: bytes, encoding: str, charset: str) -> str:
     enc = (encoding or "").strip().lower()
     if enc == "base64":
@@ -108,18 +87,18 @@ def decode_part(raw: bytes, encoding: str, charset: str) -> str:
             return raw.decode(cs, errors="strict")
         except (UnicodeDecodeError, LookupError):
             continue
-    # latin-1 maps every byte, so this always succeeds and is the real fallback.
+    # latin-1 maps every byte always succeeds, fallback 
     return raw.decode("latin-1")
 
 
-# --- Streaming mbox reader -------------------------------------------------
+# Streaming mbox reader 
 
 def _parse_headers(raw: bytes):
     return BytesParser(policy=policy.default).parsebytes(raw)
 
 
 def _ct_params(value: str):
-    """Split a Content-Type/Disposition value into (main, {params})."""
+    #splits content-type/disposition 
     parts = value.split(";")
     main = parts[0].strip().lower()
     params = {}
@@ -132,12 +111,8 @@ def _ct_params(value: str):
 
 
 class _MessageBuilder:
-    """Line-level MIME walker.
-
-    Keeps text/* parts, and for everything else records metadata while
-    discarding the bytes. Non-text lines never leave this class, which is
-    where the memory and speed win comes from.
-    """
+    #discards unnecessary bytes message/* (forwarded emails)
+    #keeps text/* parts (text/plain and text/html)
 
     __slots__ = (
         "offset", "end_offset", "header_lines", "in_headers", "boundaries", "in_part_headers",
@@ -147,8 +122,8 @@ class _MessageBuilder:
 
     def __init__(self, offset: int):
         self.offset = offset
-        # Byte offset just past this message; set by iter_messages once the
-        # next envelope line (or EOF) is reached. This is the resume point.
+        # Byte offset just past this message: for the resume point 
+        # set by iter_messages once the next envelope line (or EOF) is reached
         self.end_offset = offset
         self.header_lines: list[bytes] = []
         self.in_headers = True
@@ -166,7 +141,7 @@ class _MessageBuilder:
         self.cur_name = None
         self.skip_bytes = 0
 
-    # -- part bookkeeping --
+    # part bookkeeping
 
     def _flush_part(self):
         if self.keep and self.buf:
@@ -213,7 +188,7 @@ class _MessageBuilder:
             s = s[:-2]
         return s in self.boundaries
 
-    # -- the hot loop --
+    # hot loop
 
     def feed(self, line: bytes):
         if self.in_headers:
@@ -256,7 +231,7 @@ class _MessageBuilder:
 
 
 def iter_messages(path: str, start_offset: int = 0):
-    """Yield finished _MessageBuilder objects, one per message."""
+    # gets finished _MessageBuilder objs, one per msg
     with open(path, "rb") as fh:
         if start_offset:
             fh.seek(start_offset)
@@ -279,10 +254,10 @@ def iter_messages(path: str, start_offset: int = 0):
 
 
 
-# --- Row construction ------------------------------------------------------
+#Row construction 
 
 def pick_body(builder: _MessageBuilder):
-    """Prefer text/plain; fall back to rendering the HTML alternative."""
+    #1st choice: text/plain --> fallback to HTML
     plain = [p for p in builder.parts if p[0] == "text/plain"]
     if plain:
         text = "\n".join(decode_part(p[3], p[1], p[2]) for p in plain)
@@ -311,8 +286,7 @@ def sender_address(raw: str) -> str:
 
 
 def is_automated(msg, sender: str) -> bool:
-    """True for bulk/marketing/notification mail, which is template-identical
-    and would otherwise form the densest clusters in the corpus."""
+    # returns true for bulk/marketing/notification mail 
     if msg.get("List-Unsubscribe") or msg.get("List-Id"):
         return True
     if str(msg.get("Precedence", "")).strip().lower() in BULK_PRECEDENCE:
@@ -375,11 +349,6 @@ def build_row(builder: _MessageBuilder, keep_automated: bool = False):
     }
     return row, None
 
-
-def body_fingerprint(row: dict) -> str:
-    norm = re.sub(r"\s+", " ", row["body"]).strip().lower()
-    return hashlib.sha256(f"{row['subject'].strip().lower()}\x00{norm}".encode()).hexdigest()
-
 def body_fingerprint(row: dict) -> str:
     norm = re.sub(r"\s+", " ", row["body"]).strip().lower()
     return hashlib.sha256(
@@ -387,7 +356,7 @@ def body_fingerprint(row: dict) -> str:
     ).hexdigest()
 
 
-# --- CLI -------------------------------------------------------------------
+# CLI 
 
 def parse_args(argv=None):
     ap = argparse.ArgumentParser(description="Stage 0: mbox -> JSONL shards")
@@ -433,14 +402,13 @@ def run(args) -> int:
     resume_offset = start_offset
 
     def persist(offset: int) -> None:
-        """Record everything needed to resume exactly here."""
+        # records everything needed to resume at this point for a later run (if crashes mid run)
         deduper.append(seen_log)
         checkpoint.save(offset=offset, next_shard=writer.index, stats=dict(stats))
 
     try:
         for builder in iter_messages(args.mbox, start_offset):
             stats["read"] += 1
-            resume_offset = builder.end_offset
 
             row, reason = build_row(builder, keep_automated=args.keep_automated)
             if reason:
@@ -453,17 +421,19 @@ def run(args) -> int:
                     stats["written"] += 1
                     stats[row["direction"]] += 1
                     if writer.add(row):
-                        # A shard just closed; resume must restart *after* this
-                        # message, not at it, or the next run re-reads it.
+                        # A shard just closed resume must restart *after* this
+                        # message, so it isn't re-read
                         persist(builder.end_offset)
 
             progress.tick(builder.end_offset, note=f"kept {stats['written']:,}")
+            resume_offset = builder.end_offset
 
             if args.limit and stats["read"] >= args.limit:
                 break
     except KeyboardInterrupt:
         print("\ninterrupted; flushing partial shard", file=sys.stderr)
 
+    #writes remaining rows to disk
     writer.flush()
     persist(resume_offset)
 

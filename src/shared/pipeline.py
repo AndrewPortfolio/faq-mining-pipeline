@@ -1,12 +1,8 @@
-"""Stage-agnostic plumbing shared by every pipeline stage.
+# Read input, proccess it, write JSONL shards
 
-Stage 0 (mbox extraction), Stage 1 (Presidio redaction) and Stage 2 (Ollama
-embedding) all do the same four things: read input, process it, write JSONL
-shards, and be resumable. That loop lives here once so the three stages cannot
-drift apart.
+#Stage 0 (mbox extraction), Stage 1 (Presidio redaction) and Stage 2 (Ollama
+#embedding) uses this pipeline
 
-Nothing in this module knows what a row contains.
-"""
 
 from __future__ import annotations
 
@@ -18,26 +14,19 @@ from collections import Counter
 from typing import Any, Iterator
 
 
-# --- Reading ---------------------------------------------------------------
+# Reading 
 
 SHARD_PREFIX = "emails"
 
 
 def shard_paths(indir: str, prefix: str = SHARD_PREFIX) -> list[str]:
-    """Sorted shard paths, matching ShardWriter's naming exactly.
-
-    The '-' is load-bearing: a bare '*.jsonl' glob would also match sidecar
-    files written alongside the shards, and a stage would silently ingest its
-    own dedupe log as data.
-    """
+    # sorted shard paths that guards against other jsonl files from being read as shards
     return sorted(glob.glob(os.path.join(indir, f"{prefix}-*.jsonl")))
 
 
 def iter_shard_rows(indir: str, prefix: str = SHARD_PREFIX, skip_shards: int = 0) -> Iterator[dict]:
-    """Yield every row across a directory of JSONL shards, in shard order.
-
-    skip_shards resumes past shards a previous run already finished.
-    """
+    # get every row across a directory of JSONL shards in order
+    # Skips shards a previous run already finished 
     for path in shard_paths(indir, prefix)[skip_shards:]:
         with open(path, encoding="utf-8") as fh:
             for line in fh:
@@ -53,14 +42,12 @@ def count_rows(indir: str, prefix: str = SHARD_PREFIX) -> int:
     return total
 
 
-# --- Writing ---------------------------------------------------------------
+# Write
 
 class ShardWriter:
-    """Buffers rows and writes fixed-size JSONL shards atomically.
 
-    Each shard is written to a .part file and renamed into place, so a crash
-    mid-write can never leave a half-written shard that later parses as valid.
-    """
+    # Buffer rows (holds in mem) and writes (to disk) a fixed-size JSONL
+    # Won't leave a shard half written (unless crash --> next run restarts from the beginning)
 
     def __init__(self, outdir: str, prefix: str = SHARD_PREFIX,
                  shard_size: int = 2000, start_index: int = 0):
@@ -76,7 +63,7 @@ class ShardWriter:
         return len(self._buf)
 
     def add(self, row: dict) -> bool:
-        """Buffer a row. Returns True if that filled a shard and flushed it."""
+        # Buffer a row to memory --> once buf holds shard_size rows call flush
         self._buf.append(json.dumps(row, ensure_ascii=False) + "\n")
         if len(self._buf) >= self.shard_size:
             self.flush()
@@ -84,7 +71,7 @@ class ShardWriter:
         return False
 
     def flush(self) -> str | None:
-        """Write the buffered rows as the next shard. No-op when empty."""
+        # writes all buffered rows as the next jsonl shard 
         if not self._buf:
             return None
         path = os.path.join(self.outdir, f"{self.prefix}-{self.index:05d}.jsonl")
@@ -97,11 +84,10 @@ class ShardWriter:
         return path
 
 
-# --- Resuming --------------------------------------------------------------
+# Resuming 
 
 class Checkpoint:
-    """Atomically-persisted resume state, written next to the output shards."""
-
+    # Atomically-persisted resume state
     def __init__(self, path: str):
         self.path = path
 
@@ -125,14 +111,12 @@ class Checkpoint:
             os.remove(self.path)
 
 
-# --- Reporting -------------------------------------------------------------
+# Reporting 
 
 class Stats(Counter):
-    """Counter that renders as an aligned summary block.
-
-    Being a Counter means an unseen key is 0 rather than a KeyError, so adding
-    a new drop reason to a stage cannot crash a long run partway through.
-    """
+    #Counter that renders as an aligned summary block 
+    # Because it's a Counter, a missing key counts as 0,
+    # so a new drop reason can't crash a long run with a KeyError
 
     def render(self, indent: str = "  ") -> str:
         if not self:
@@ -142,11 +126,9 @@ class Stats(Counter):
 
 
 class Progress:
-    """Periodic throughput/ETA line.
-
-    `position` and `total` are in whatever unit the stage measures itself in --
-    bytes of an mbox for Stage 0, rows for later stages.
-    """
+   # Gives periodic updates on progress
+   # In Stage 0, position is in bytes while `every` counts messages,
+   # so the two use different units
 
     def __init__(self, total: float, every: int = 2000,
                  start: float = 0.0, unit: str = "MB", scale: float = 1e6):
@@ -159,7 +141,7 @@ class Progress:
         self.t0 = time.time()
 
     def tick(self, position: float, note: str = "") -> str | None:
-        """Count one item; emit a line every `every` items. Returns it, or None."""
+        # count one item, emit a line every `every` items
         self.ticks += 1
         if self.ticks % self.every:
             return None
@@ -176,18 +158,12 @@ class Progress:
         return (time.time() - self.t0) / 60
 
 
-# --- Deduplication ---------------------------------------------------------
+# Deduplication 
 
 class Deduper:
-    """Two-key dedupe (a strong id plus a content fingerprint).
-
-    Resume correctness depends on this state surviving a restart: it is what
-    stops a re-read message from being written twice.
-
-    State persists to an append-only log. Rewriting the full key set on every
-    flush would make a run quadratic in its own output -- on a 29k-row corpus
-    that is 4 MB rewritten once per shard.
-    """
+    #Two-key dedupe (a strong id plus a content fingerprint)
+    # Appends to a log so each save doesn't rewrite every key
+    # rewriting would get slower as the output grows
 
     def __init__(self):
         self.ids: set[str] = set()
@@ -196,7 +172,7 @@ class Deduper:
         self._new_prints: list[str] = []
 
     def check(self, key: str | None, fingerprint: str) -> str | None:
-        """Return a drop reason, or None if this row is new. Records it if new."""
+        # return a drop reason, only appends new key (ID + Fingerprint)
         if key and key in self.ids:
             return "dup_id"
         if fingerprint in self.prints:
@@ -225,7 +201,7 @@ class Deduper:
         self._new_prints.clear()
 
     def append(self, path: str) -> None:
-        """Persist only the keys seen since the last append."""
+        # persist only: it saves only the new ids and fingerprints
         if not self._new_ids and not self._new_prints:
             return
         with open(path, "a", encoding="utf-8") as fh:
