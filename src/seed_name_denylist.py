@@ -3,7 +3,7 @@
 # From/To display names are known people, so harvesting them needs no NER guesswork
 # Writes data/pii/name_denylist.txt --> holds real client names
 # Usage:
-#     python src/seed_name_denylist.py           # refuses to overwrite a list you've edited
+#     python src/seed_name_denylist.py           # refuses to overwrite edited list in data 
 #     python src/seed_name_denylist.py --force   # regenerate from scratch
 
 from __future__ import annotations
