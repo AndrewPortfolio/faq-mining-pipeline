@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import argparse
 import csv
+import glob
 import io
 import json
 import os
@@ -19,6 +20,7 @@ import sys
 
 from shared.pii_recognizers import (ALLOWLIST_PATH, DENYLIST_PATH, ENTITIES, VENUELIST_PATH,
                                     build_analyzer, load_allowlist)
+from shared.decisions import COMMON_DATETIME_PATH, COMMON_LOCATION_PATH, Rules
 from shared.pipeline import Checkpoint, Progress, Stats, count_rows, shard_paths
 
 
@@ -34,7 +36,7 @@ CONTEXT_CHARS = 40    # enough either side to judge a hit without opening view.t
 PROGRESS_EVERY = 200  # ~30 s between lines at trf's ~7 emails/s
 
 COLUMNS = ["email_id", "thrid", "field", "entity_type", "start", "end", "text", "context",
-           "score", "recognizer", "decision", "note"]
+           "score", "recognizer", "decision", "rule", "note"]
 
 
 # Reading
@@ -42,6 +44,15 @@ COLUMNS = ["email_id", "thrid", "field", "entity_type", "start", "end", "text", 
 def read_shard(path: str) -> list[dict]:
     with open(path, encoding="utf-8") as fh:
         return [json.loads(line) for line in fh if line.strip()]
+
+
+def review_spans(reviewdir: str) -> list[dict]:
+    # every shard's current review file; the .orig copies don't match the pattern
+    spans = []
+    for path in sorted(glob.glob(os.path.join(reviewdir, "emails-*.spans.csv"))):
+        with open(path, encoding="utf-8", newline="") as fh:
+            spans.extend(csv.DictReader(fh))
+    return spans
 
 
 # Detection
@@ -52,8 +63,8 @@ def context_snippet(text: str, start: int, end: int) -> str:
     return " ".join(snippet.split())
 
 
-def row_spans(analyzer, row: dict, allow_list: list[str]) -> list[dict]:
-    # decision is pre-filled to redact --> all rows are redacted 
+def row_spans(analyzer, row: dict, allow_list: list[str], rules: Rules) -> list[dict]:
+    # decision is pre-filled by shared.decisions; rule names which one fired
     spans = []
     for field in FIELDS:
         text = row.get(field) or ""
@@ -61,6 +72,9 @@ def row_spans(analyzer, row: dict, allow_list: list[str]) -> list[dict]:
             continue
         results = analyzer.analyze(text=text, language="en", entities=ENTITIES, allow_list=allow_list)
         for result in sorted(results, key=lambda r: (r.start, -r.score)):
+            recognizer = (result.recognition_metadata or {}).get("recognizer_name", "")
+            decision, rule = rules.decide(result.entity_type, text[result.start:result.end],
+                                          result.score, recognizer)
             spans.append({
                 "email_id": row.get("id") or "",
                 "thrid": row.get("thrid") or "",
@@ -71,8 +85,9 @@ def row_spans(analyzer, row: dict, allow_list: list[str]) -> list[dict]:
                 "text": text[result.start:result.end],
                 "context": context_snippet(text, result.start, result.end),
                 "score": round(result.score, 2),
-                "recognizer": (result.recognition_metadata or {}).get("recognizer_name", ""),
-                "decision": "redact",
+                "recognizer": recognizer,
+                "decision": decision,
+                "rule": rule,
                 "note": "",
             })
     return spans
@@ -126,6 +141,8 @@ def parse_args(argv=None):
     ap.add_argument("--denylist", default=DENYLIST_PATH)
     ap.add_argument("--venues", default=VENUELIST_PATH)
     ap.add_argument("--allowlist", default=ALLOWLIST_PATH)
+    ap.add_argument("--common-datetime", default=COMMON_DATETIME_PATH)
+    ap.add_argument("--common-location", default=COMMON_LOCATION_PATH)
     ap.add_argument("--limit", type=int, default=0,
                     help="smoke test: analyze N emails into <outdir>/smoke")
     ap.add_argument("--force", action="store_true",
@@ -152,6 +169,7 @@ def run(args) -> int:
     stats.update((checkpoint.load() or {}).get("stats", {}))
 
     allow_list = load_allowlist(args.allowlist)
+    rules = Rules.load(args.common_datetime, args.common_location, args.venues)
     analyzer = build_analyzer(args.denylist, args.venues)  # loads trf
 
     progress = Progress(total=count_rows(args.indir), every=PROGRESS_EVERY,
@@ -177,7 +195,7 @@ def run(args) -> int:
 
             spans, views = [], []
             for row in rows:
-                found = row_spans(analyzer, row, allow_list)
+                found = row_spans(analyzer, row, allow_list, rules)
                 spans.extend(found)
                 views.append(render_view(row, found))
                 stats["emails"] += 1
@@ -188,6 +206,7 @@ def run(args) -> int:
                     stats["missing_id"] += 1
                 for span in found:
                     stats[span["entity_type"]] += 1
+                    stats[f"decision_{span['decision']}"] += 1
                 progress.tick(stats["emails"], note=os.path.basename(base))
 
             table = render_csv(spans)

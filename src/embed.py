@@ -23,6 +23,6 @@ vectors = embed_texts(redacted_texts)
 # Convert to a clean NumPy array and save efficiently
 np.save("embeddings.npy", np.array(vectors))
 
-# Save your mapping tracking IDs
+# Save mapping tracking IDs
 with open("email_ids.json", "w") as f:
     json.dump(email_ids, f)

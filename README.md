@@ -27,7 +27,7 @@ Runs Presidio (spaCy `en_core_web_trf`) over each email's subject and body and w
   (`data/pii/venue_denylist.txt`), a US street-address pattern, and `@handle` matching.
 - **`data/pii/allowlist.txt`** suppresses known non-PII (WeddingWire, Venmo, …) before it
   ever reaches the review file.
-- **Outputs per shard**, in `data/review/`: `emails-NNNNN.spans.csv` (manually edit 
+- **Outputs per shard**, in `data/review/`: `emails-NNNNN.spans.csv` (edit 
   each row. Each row has a `decision` column, pre-filled `redact`, can flip to `keep` for false
   positives), a `.spans.orig.csv` snapshot used to catch deleted rows, and a `.view.txt`
   with every email in the shard shown with its spans marked to see what
@@ -37,9 +37,8 @@ Runs Presidio (spaCy `en_core_web_trf`) over each email's subject and body and w
 
 ### 1b. `apply_redactions.py` — redact on rows labeled `redact` in 1a
 Reads edited review files and writes the redacted shards. Refuses to write a shard
-(with a clear error, nothing written) if a row was deleted from the CSV instead of marked
-`keep`, a `decision` isn't `redact`/`keep`, a span's text no longer matches, or part of the
-shard was never analyzed — each of those would otherwise let PII through silently.
+(clear error --> write nothing) flag if a row was deleted from the CSV instead of marked
+`redact`/`keep`, deleted rows would let PII through silently.
 
 - **Redacts:** every `redact` span is replaced with a `<ENTITY_TYPE>` tag (e.g. `<PERSON>`).
 - **Hashes, not removes:** `sender` and `to` addresses and attachment filenames are hashed

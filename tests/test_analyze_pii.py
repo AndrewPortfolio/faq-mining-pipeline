@@ -15,7 +15,8 @@ from analyze_pii import COLUMNS, main
 
 
 class _FakeAnalyzer:
-    #flags every occurrence of each needle as PERSON, minus anything on the allow list
+    #flags every occurrence of each needle, minus anything on the allow list
+    #a needle is "Thao" (PERSON, 0.85) or ("The", "PERSON", 0.2, "denylist_ambiguous")
     def __init__(self, needles=("Thao",)):
         self.needles = needles
         self.texts = []
@@ -24,11 +25,15 @@ class _FakeAnalyzer:
         self.texts.append(text)
         results = []
         for needle in self.needles:
+            parts = (needle,) if isinstance(needle, str) else needle
+            needle, entity, score, recognizer = parts + ("", "PERSON", 0.85, "")[len(parts):]
             if needle in (allow_list or ()):
                 continue
+            meta = {"recognizer_name": recognizer} if recognizer else None
             start = text.find(needle)
             while start >= 0:
-                results.append(RecognizerResult("PERSON", start, start + len(needle), 0.85))
+                results.append(RecognizerResult(entity, start, start + len(needle), score,
+                                                recognition_metadata=meta))
                 start = text.find(needle, start + 1)
         return results
 
@@ -60,8 +65,16 @@ def _shards(tmp_path, *shards):
 def _run(tmp_path, indir, *extra):
     allow = tmp_path / "allow.txt"
     allow.write_text("WeddingWire\n", encoding="utf-8")
+    common_dt = tmp_path / "common_dt.txt"
+    common_dt.write_text("morning\n", encoding="utf-8")
+    common_loc = tmp_path / "common_loc.txt"
+    common_loc.write_text("home\n", encoding="utf-8")
+    venues = tmp_path / "venues.txt"
+    venues.write_text("Casa Romantica\n", encoding="utf-8")
     outdir = tmp_path / "review"
-    code = main(["--indir", str(indir), "--outdir", str(outdir), "--allowlist", str(allow), *extra])
+    code = main(["--indir", str(indir), "--outdir", str(outdir), "--allowlist", str(allow),
+                 "--common-datetime", str(common_dt), "--common-location", str(common_loc),
+                 "--venues", str(venues), *extra])
     return code, outdir
 
 
@@ -103,12 +116,28 @@ class TestOutputs:
         assert review == (outdir / "emails-00000.spans.orig.csv").read_text(encoding="utf-8")
 
     def test_view_includes_emails_with_no_spans(self, tmp_path, fake):
-        #a span file alone can't show you an email the model missed entirely
+        #a span file alone can't show an email the model missed entirely
         indir = _shards(tmp_path, [_row(1), _row(2, body="No names here at all")])
         _, outdir = _run(tmp_path, indir)
         view = (outdir / "emails-00000.view.txt").read_text(encoding="utf-8")
         assert "[[PERSON:Thao]]" in view
         assert "<m2@example.com>" in view and "No names here at all" in view
+
+    def test_decision_and_rule_come_from_the_rules(self, tmp_path, monkeypatch):
+        analyzer = _FakeAnalyzer(needles=("Thao", ("Irvine", "LOCATION"), ("Casa Romantica", "LOCATION"),
+                                          ("morning", "DATE_TIME"), ("October 22", "DATE_TIME"),
+                                          ("The", "PERSON", 0.2, "denylist_ambiguous")))
+        monkeypatch.setattr(analyze_pii, "build_analyzer", lambda *a, **kw: analyzer)
+        body = "Hi Thao, good morning! The lions: October 22 at Casa Romantica in Irvine?"
+        indir = _shards(tmp_path, [_row(1, body=body)])
+        _, outdir = _run(tmp_path, indir)
+        got = {s["text"]: (s["decision"], s["rule"]) for s in _spans(outdir / "emails-00000.spans.csv")}
+        assert got == {"Thao": ("redact", "person_always"),
+                       "morning": ("keep", "common_word"),
+                       "October 22": ("redact", "calendar_date"),
+                       "Casa Romantica": ("redact", "venue_list"),
+                       "Irvine": ("keep", "location_baseline"),
+                       "The": ("keep", "ambiguous_word")}
 
     def test_allow_list_suppresses_hits(self, tmp_path, monkeypatch):
         analyzer = _FakeAnalyzer(needles=("WeddingWire",))
