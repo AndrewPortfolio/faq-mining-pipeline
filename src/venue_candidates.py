@@ -1,11 +1,11 @@
-# Stage 1: populates data/pii/venue_denylist.txt with likely client venue names
+# Stage 1: creates a most likely client venue names in data/pii/venue_candidates.csv 
 # LOCATION is kept by default
 # A place only seen a few time --> most likely client venue 
-# No redactions only populates list 
+# No redactions: real venues are copied into data/pii/venue_denylist.txt by hand
 # Counts threads not spans --> 20 thread convo is the same client 
 
 # Usage:
-#     venv/bin/python src/venue_candidates.py                  # -> data/review/venue_candidates.csv
+#     venv/bin/python src/venue_candidates.py                  # -> data/pii/venue_candidates.csv
 #     venv/bin/python src/venue_candidates.py --max-threads 1  # tighter list
 
 from __future__ import annotations
@@ -24,6 +24,7 @@ from shared.pii_recognizers import VENUELIST_PATH
 
 # Configuration
 
+DEFAULT_OUT = "data/pii/venue_candidates.csv"  # beside the venue list it feeds, out of data/review
 DEFAULT_MAX_THREADS = 2  # starting point; the printed distribution tunes this number 
 COLUMNS = ["term", "threads", "spans", "context"]
 
@@ -63,7 +64,7 @@ def distribution(terms: dict[str, dict]) -> str:
 def parse_args(argv=None):
     ap = argparse.ArgumentParser(description="List rare LOCATION terms as venue-list candidates")
     ap.add_argument("--reviewdir", default=DEFAULT_OUTDIR)
-    ap.add_argument("--out", default=None, help="default: <reviewdir>/venue_candidates.csv")
+    ap.add_argument("--out", default=DEFAULT_OUT)
     ap.add_argument("--max-threads", type=int, default=DEFAULT_MAX_THREADS)
     ap.add_argument("--common-location", default=COMMON_LOCATION_PATH)
     ap.add_argument("--venues", default=VENUELIST_PATH)
@@ -83,7 +84,7 @@ def run(args) -> int:
     writer = csv.DictWriter(buf, fieldnames=COLUMNS, lineterminator="\n")
     writer.writeheader()
     writer.writerows(rows)
-    out = args.out or os.path.join(args.reviewdir, "venue_candidates.csv")
+    out = args.out
     write_atomic(out, buf.getvalue())
 
     print(f"{len(terms)} distinct LOCATION terms (after common words and the venue list):")
