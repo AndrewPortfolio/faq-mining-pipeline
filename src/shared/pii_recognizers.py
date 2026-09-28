@@ -42,6 +42,7 @@ AMBIGUOUS_PAIR = 0.85       # beside another proper noun, or inside trf's own PE
 VENUE_SCORE = 0.85      # added by hand during review, so as trustworthy as a model hit
 PLACE_SCORE = 0.85      # trf's own majority call on the term, carried to the mentions it skipped
 ZIP_SCORE = 0.6         # every LOCATION redacts, so this only orders review rows
+VENUE_NAME_SCORE = 0.5  # every LOCATION redacts, so this only orders review rows
 EIN_SCORE = 0.4         # the shape alone is weak; "tax id" / "ein" nearby lifts it to 0.75
 POLICY_SCORE = 0.6      # the "Policy No:" label is already part of the match
 CARRIER_SCORE = 0.8     # a confirmed carrier prefix, found bare in subject lines
@@ -73,6 +74,20 @@ _CA_ZIP_RE = r"(?<![\d$.,/#-])\b9[0-6]\d{3}(?:-\d{4})?\b(?![\d,.]*\d)"
 _STATES = ("AL|AK|AZ|AR|CO|CT|DE|FL|GA|HI|ID|IL|IN|IA|KS|KY|LA|ME|MD|MA|MI|MN|MS|MO|MT|NE|NV|NH|NJ|NM|NY|"
            "NC|ND|OH|OK|OR|PA|RI|SC|SD|TN|TX|UT|VT|VA|WA|WV|WI|WY|DC")
 _STATE_ZIP_RE = rf"(?<=\b(?:{_STATES})\.?,?\s{{1,3}})\d{{5}}(?:-\d{{4}})?\b"
+
+# 1-4 capitalized words ending in a word only a place carries: "Hewes Middle School", "South Coast Plaza".
+# Catches the venues trf reads as nothing; names without such a word ("Bella Terra") stay on the hand list
+_VENUE_WORDS = ("School", "Elementary", "Academy", "College", "University", "Library", "Museum", "Plaza", "Mall",
+                "Market", "Marketplace", "Exchange", "Square", "Commons", "Promenade", "Hotel", "Resort", "Inn",
+                "Lodge", "Ranch", "Estate", "Estates", "Manor", "Farm", "Barn", "Winery", "Garden", "Gardens",
+                "Park", "Center", "Centre", "Hall", "Club", "Church", "Temple", "Chapel", "Theater", "Theatre",
+                "Ballroom", "Pavilion", "Terrace", "Village", "Restaurant")
+_VENUE_NAME_RE = rf"\b(?:[A-Z][\w'&.-]*\s+){{1,4}}(?:{'|'.join(_VENUE_WORDS)})\b"
+# cut off the front of a match: "Hi Fremont Elementary" is about Fremont Elementary
+_VENUE_LEADING = {"Hi", "Hello", "Dear", "Our", "The", "A", "An", "This", "That", "Your", "My", "Their",
+                  "At", "To", "From", "In", "For", "And", "Or", "With", "Re", "Fw", "Fwd", "Thanks"}
+# part of a venue name, but says nothing about which one: "Elementary School" names no school
+_VENUE_GENERIC = {"Elementary", "Middle", "High", "Junior", "Main"} | set(_VENUE_WORDS)
 
 EIN_CONTEXT = ["ein", "fein", "tax", "employer", "federal", "tin"]
 POLICY_CONTEXT = ["policy", "insurance", "certificate", "coi", "coverage", "insured"]
@@ -155,6 +170,22 @@ def ambiguous_score(doc, start: int, end: int) -> float | None:
     return AMBIGUOUS_PAIR if after is not None and after.pos_ == "PROPN" else AMBIGUOUS_ALONE
 
 
+class VenueNameRecognizer(PatternRecognizer):
+    # The regex finds capitalized words ending in a venue word; this trims filler off the front and
+    # drops phrases that name no particular place, which one regex can't say readably
+
+    def analyze(self, text, entities, nlp_artifacts=None, regex_flags=None):
+        results = []
+        for result in super().analyze(text, entities, nlp_artifacts, regex_flags):
+            words = text[result.start:result.end].split()
+            while len(words) > 1 and words[0] in _VENUE_LEADING:
+                result.start = text.index(words[1], result.start + len(words[0]))
+                words = words[1:]
+            if any(w not in _VENUE_GENERIC for w in words[:-1]):
+                results.append(result)
+        return results
+
+
 def name_recognizers(names: list[str], ambiguous: list[str]) -> list[PatternRecognizer]:
     # Two recognizers rather than one so the ambiguous list carries its own scoring and case rule
     recognizers = []
@@ -186,6 +217,10 @@ def pattern_recognizers() -> list[PatternRecognizer]:
                           patterns=[Pattern("ca_range", _CA_ZIP_RE, ZIP_SCORE),
                                     Pattern("state_anchored", _STATE_ZIP_RE, ZIP_SCORE)],
                           global_regex_flags=CASE_SENSITIVE),
+        # LOCATION too; case-sensitive, since the capitals are what mark a name
+        VenueNameRecognizer(supported_entity="LOCATION", name="venue_name",
+                            patterns=[Pattern("venue_name", _VENUE_NAME_RE, VENUE_NAME_SCORE)],
+                            global_regex_flags=CASE_SENSITIVE),
     ]
 
 

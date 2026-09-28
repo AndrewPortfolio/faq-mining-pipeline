@@ -10,10 +10,10 @@ from spacy.vocab import Vocab
 
 from shared.pii_recognizers import (AMBIGUOUS_ALONE, AMBIGUOUS_IN_ENTITY, AMBIGUOUS_PAIR,
                                     AMBIGUOUS_RECOGNIZER, AMBIGUOUS_WORD, CARRIER_SCORE, EIN_SCORE,
-                                    ENTITIES, NAME_SCORE, PLACE_SCORE, POLICY_SCORE, VENUE_SCORE,
-                                    ZIP_SCORE, custom_recognizers, load_allowlist, load_denylist,
-                                    load_places, load_venues, name_recognizers, pattern_recognizers,
-                                    place_recognizers, venue_recognizers)
+                                    ENTITIES, NAME_SCORE, PLACE_SCORE, POLICY_SCORE, VENUE_NAME_SCORE,
+                                    VENUE_SCORE, ZIP_SCORE, custom_recognizers, load_allowlist,
+                                    load_denylist, load_places, load_venues, name_recognizers,
+                                    pattern_recognizers, place_recognizers, venue_recognizers)
 
 
 def _hits(recognizer, text):
@@ -23,6 +23,11 @@ def _hits(recognizer, text):
 
 def _by_entity(recognizers, entity):
     return next(r for r in recognizers if entity in r.supported_entities)
+
+
+def _named(recognizers, name):
+    #by name, for the entities more than one pattern recognizer produces (LOCATION)
+    return next(r for r in recognizers if r.name == name)
 
 
 def _write(tmp_path, name, text):
@@ -136,7 +141,7 @@ class TestCustomRecognizers:
         assert entities == {"PERSON", "LOCATION", "STREET_ADDRESS", "SOCIAL_HANDLE",
                             "US_EIN", "INSURANCE_POLICY"}
         assert {"denylist_venues", "denylist_places", "denylist_places_capitalized",
-                "us_zip"} <= {r.name for r in recognizers}
+                "us_zip", "venue_name"} <= {r.name for r in recognizers}
 
 
 class TestEin:
@@ -225,21 +230,21 @@ class TestZip:
 
     def test_california_zips(self):
         #bare 9xxxx numbers were all zips in this inbox, with or without the state in front
-        recognizer = _by_entity(pattern_recognizers(), "LOCATION")
+        recognizer = _named(pattern_recognizers(), "us_zip")
         assert _hits(recognizer, "Westminster, CA 92683 Thank you") == [("92683", ZIP_SCORE)]
         assert _hits(recognizer, "Fullerton, Ca 92832 (this will") == [("92832", ZIP_SCORE)]
         assert _hits(recognizer, "Pasadena, 91101 for the cost") == [("91101", ZIP_SCORE)]
         assert _hits(recognizer, "Irvine, CA 92618-1234.") == [("92618-1234", ZIP_SCORE)]
 
     def test_other_states_need_their_code(self):
-        recognizer = _by_entity(pattern_recognizers(), "LOCATION")
+        recognizer = _named(pattern_recognizers(), "us_zip")
         assert _hits(recognizer, "Baltimore, MD 21201") == [("21201", ZIP_SCORE)]
         assert _hits(recognizer, "Indianapolis, IN 46204") == [("46204", ZIP_SCORE)]
         #lowercase "in" is the word, not Indiana
         assert _hits(recognizer, "sold in 46204 units, ref 21201") == []
 
     def test_ignores_prices_phones_and_refs(self):
-        recognizer = _by_entity(pattern_recognizers(), "LOCATION")
+        recognizer = _named(pattern_recognizers(), "us_zip")
         text = "$95,000 or 95000.00, call 949-555-0123, order #91234, tracking 940011189922"
         assert _hits(recognizer, text) == []
 
@@ -266,3 +271,29 @@ class TestPlaces:
 
     def test_empty_lists_make_no_recognizer(self):
         assert place_recognizers([], []) == []
+
+
+# venue names
+
+class TestVenueNames:
+
+    def test_capitalized_names_ending_in_a_venue_word(self):
+        recognizer = _named(pattern_recognizers(), "venue_name")
+        assert _hits(recognizer, "an assembly at Hewes Middle School next week") == [
+            ("Hewes Middle School", VENUE_NAME_SCORE)]
+        assert _hits(recognizer, "we'll meet at South Coast Plaza.") == [("South Coast Plaza", VENUE_NAME_SCORE)]
+        assert _hits(recognizer, "booked Pacific Palms Resort") == [("Pacific Palms Resort", VENUE_NAME_SCORE)]
+
+    def test_trims_filler_off_the_front(self):
+        #"Hi" is the greeting, not part of the school's name
+        recognizer = _named(pattern_recognizers(), "venue_name")
+        assert _hits(recognizer, "Hi Fremont Elementary team,") == [("Fremont Elementary", VENUE_NAME_SCORE)]
+
+    def test_generic_phrases_name_no_venue(self):
+        recognizer = _named(pattern_recognizers(), "venue_name")
+        assert _hits(recognizer, "Our School loved it. Elementary School kids and High School staff") == []
+
+    def test_needs_capitals_and_a_venue_word(self):
+        #"Bella Terra" has no venue word, so only the hand list catches it
+        recognizer = _named(pattern_recognizers(), "venue_name")
+        assert _hits(recognizer, "the school plaza near Bella Terra") == []
