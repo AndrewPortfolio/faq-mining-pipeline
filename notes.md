@@ -8,6 +8,14 @@
 - [ ] Output paths ignore layout 
 
 # 09/26/26
+- [x] Hardened analyze PII to find EIN and policy numbers 
+    - These slipped through the first pass after data review 
+    - Ambiguous names like "The", "To", "An", etc. checks have been hardend to check for context --> no longer redacts false positives
+- [ ] Remove Locations/Venues from data
+    - was brainstorming ideas on how to remove locations/venues 
+        - Remove all vs remove at freq k (arbritrary number)
+
+# xx/xx/26
 - [ ] Run analyze_pii.py
 - [ ] Review csv files in /data/reviews
 - [ ] Run apply_redactions.py 

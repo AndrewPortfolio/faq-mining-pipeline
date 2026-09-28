@@ -71,10 +71,12 @@ def _run(tmp_path, indir, *extra):
     common_loc.write_text("home\n", encoding="utf-8")
     venues = tmp_path / "venues.txt"
     venues.write_text("Casa Romantica\n", encoding="utf-8")
+    places = tmp_path / "places.txt"
+    places.write_text("[places]\n", encoding="utf-8")
     outdir = tmp_path / "review"
     code = main(["--indir", str(indir), "--outdir", str(outdir), "--allowlist", str(allow),
                  "--common-datetime", str(common_dt), "--common-location", str(common_loc),
-                 "--venues", str(venues), *extra])
+                 "--venues", str(venues), "--places", str(places), *extra])
     return code, outdir
 
 
@@ -135,8 +137,8 @@ class TestOutputs:
         assert got == {"Thao": ("redact", "person_always"),
                        "morning": ("keep", "common_word"),
                        "October 22": ("redact", "calendar_date"),
-                       "Casa Romantica": ("redact", "venue_list"),
-                       "Irvine": ("keep", "location_baseline"),
+                       "Casa Romantica": ("redact", "location_always"),
+                       "Irvine": ("redact", "location_always"),
                        "The": ("keep", "ambiguous_word")}
 
     def test_allow_list_suppresses_hits(self, tmp_path, monkeypatch):

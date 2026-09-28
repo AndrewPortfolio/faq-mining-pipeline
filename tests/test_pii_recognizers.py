@@ -10,9 +10,10 @@ from spacy.vocab import Vocab
 
 from shared.pii_recognizers import (AMBIGUOUS_ALONE, AMBIGUOUS_IN_ENTITY, AMBIGUOUS_PAIR,
                                     AMBIGUOUS_RECOGNIZER, AMBIGUOUS_WORD, CARRIER_SCORE, EIN_SCORE,
-                                    ENTITIES, NAME_SCORE, POLICY_SCORE, VENUE_SCORE, custom_recognizers,
-                                    load_allowlist, load_denylist, load_venues, name_recognizers,
-                                    pattern_recognizers, venue_recognizers)
+                                    ENTITIES, NAME_SCORE, PLACE_SCORE, POLICY_SCORE, VENUE_SCORE,
+                                    ZIP_SCORE, custom_recognizers, load_allowlist, load_denylist,
+                                    load_places, load_venues, name_recognizers, pattern_recognizers,
+                                    place_recognizers, venue_recognizers)
 
 
 def _hits(recognizer, text):
@@ -129,9 +130,13 @@ class TestCustomRecognizers:
     def test_bundles_names_venues_and_patterns(self, tmp_path):
         names = _write(tmp_path, "names.txt", "[names]\nNguyen # 3\n[ambiguous]\nDo # 9\n")
         venues = _write(tmp_path, "venues.txt", "Rancho Las Lomas\n")
-        entities = {e for r in custom_recognizers(names, venues) for e in r.supported_entities}
+        places = _write(tmp_path, "places.txt", "[places]\nirvine\n[capitalized]\nOrange\n")
+        recognizers = custom_recognizers(names, venues, places)
+        entities = {e for r in recognizers for e in r.supported_entities}
         assert entities == {"PERSON", "LOCATION", "STREET_ADDRESS", "SOCIAL_HANDLE",
                             "US_EIN", "INSURANCE_POLICY"}
+        assert {"denylist_venues", "denylist_places", "denylist_places_capitalized",
+                "us_zip"} <= {r.name for r in recognizers}
 
 
 class TestEin:
@@ -213,3 +218,51 @@ class TestAmbiguousRescoring:
     def test_untagged_parse_fails_closed(self):
         assert _scored(("The", "", "O"), ("lions", "", "O"), tagged=False) == [("The", NAME_SCORE)]
 
+
+# zip codes
+
+class TestZip:
+
+    def test_california_zips(self):
+        #bare 9xxxx numbers were all zips in this inbox, with or without the state in front
+        recognizer = _by_entity(pattern_recognizers(), "LOCATION")
+        assert _hits(recognizer, "Westminster, CA 92683 Thank you") == [("92683", ZIP_SCORE)]
+        assert _hits(recognizer, "Fullerton, Ca 92832 (this will") == [("92832", ZIP_SCORE)]
+        assert _hits(recognizer, "Pasadena, 91101 for the cost") == [("91101", ZIP_SCORE)]
+        assert _hits(recognizer, "Irvine, CA 92618-1234.") == [("92618-1234", ZIP_SCORE)]
+
+    def test_other_states_need_their_code(self):
+        recognizer = _by_entity(pattern_recognizers(), "LOCATION")
+        assert _hits(recognizer, "Baltimore, MD 21201") == [("21201", ZIP_SCORE)]
+        assert _hits(recognizer, "Indianapolis, IN 46204") == [("46204", ZIP_SCORE)]
+        #lowercase "in" is the word, not Indiana
+        assert _hits(recognizer, "sold in 46204 units, ref 21201") == []
+
+    def test_ignores_prices_phones_and_refs(self):
+        recognizer = _by_entity(pattern_recognizers(), "LOCATION")
+        text = "$95,000 or 95000.00, call 949-555-0123, order #91234, tracking 940011189922"
+        assert _hits(recognizer, text) == []
+
+
+# seeded place list
+
+class TestPlaces:
+
+    def test_any_case_section(self):
+        recognizer = place_recognizers(["huntington beach"], [])[0]
+        assert _hits(recognizer, "pls come to huntington beach or Huntington Beach") == [
+            ("Huntington Beach", PLACE_SCORE), ("huntington beach", PLACE_SCORE)]
+
+    def test_capitalized_section_needs_the_capital(self):
+        #"orange" is a lion color in this inbox; only "Orange" is the city
+        recognizer = place_recognizers([], ["Orange"])[0]
+        assert _hits(recognizer, "gold fur and orange accents") == []
+        assert _hits(recognizer, "a school in the City of Orange") == [("Orange", PLACE_SCORE)]
+
+    def test_load_places_reads_both_sections(self, tmp_path):
+        path = _write(tmp_path, "places.txt", "# header\n[places]\nirvine                   # 697/921\n"
+                                               "[capitalized]\nOrange                   # 156/260\n")
+        assert load_places(path) == (["irvine"], ["Orange"])
+
+    def test_empty_lists_make_no_recognizer(self):
+        assert place_recognizers([], []) == []

@@ -18,6 +18,7 @@ DEFAULT_MODEL = "en_core_web_trf"
 DENYLIST_PATH = "data/pii/name_denylist.txt"
 ALLOWLIST_PATH = "data/pii/allowlist.txt"
 VENUELIST_PATH = "data/pii/venue_denylist.txt"
+PLACELIST_PATH = "data/pii/place_denylist.txt"
 
 # US_DRIVER_LICENSE is left out (it fires on ordinary alphanumerics), and so is NRP:
 # "Vietnamese tea ceremony" is FAQ content, not PII
@@ -39,6 +40,8 @@ AMBIGUOUS_WORD = 0.2        # tagged as an ordinary word: "The" lions, "To" conf
 AMBIGUOUS_ALONE = 0.6       # a proper noun on its own: "Hi An,"
 AMBIGUOUS_PAIR = 0.85       # beside another proper noun, or inside trf's own PERSON: "Tu Nguyen"
 VENUE_SCORE = 0.85      # added by hand during review, so as trustworthy as a model hit
+PLACE_SCORE = 0.85      # trf's own majority call on the term, carried to the mentions it skipped
+ZIP_SCORE = 0.6         # every LOCATION redacts, so this only orders review rows
 EIN_SCORE = 0.4         # the shape alone is weak; "tax id" / "ein" nearby lifts it to 0.75
 POLICY_SCORE = 0.6      # the "Policy No:" label is already part of the match
 CARRIER_SCORE = 0.8     # a confirmed carrier prefix, found bare in subject lines
@@ -62,6 +65,14 @@ _EIN_RE = r"\b\d{2}-\d{7}\b"
 _POLICY_RE = (r"(?<=\b(?:policy|certificate|cert)\s*(?:no\.?|number|#)\s*[:#-]?\s*)"
               r"(?=[A-Za-z0-9-]*\d)[A-Za-z0-9][A-Za-z0-9-]{3,19}\b")
 _CARRIER_RE = r"\bNAEP\d{4,10}\b"
+
+# California's zip range is the only bare 9xxxx number this inbox writes: 12 of 12 sampled were zips
+# ("Costa Mesa 92626", "Ca 92832"). The guards keep prices ($95,000), decimals and #refs out
+_CA_ZIP_RE = r"(?<![\d$.,/#-])\b9[0-6]\d{3}(?:-\d{4})?\b(?![\d,.]*\d)"
+# Any other state needs its code in front, or every 5-digit number would match
+_STATES = ("AL|AK|AZ|AR|CO|CT|DE|FL|GA|HI|ID|IL|IN|IA|KS|KY|LA|ME|MD|MA|MI|MN|MS|MO|MT|NE|NV|NH|NJ|NM|NY|"
+           "NC|ND|OH|OK|OR|PA|RI|SC|SD|TN|TX|UT|VT|VA|WA|WV|WI|WY|DC")
+_STATE_ZIP_RE = rf"(?<=\b(?:{_STATES})\.?,?\s{{1,3}})\d{{5}}(?:-\d{{4}})?\b"
 
 EIN_CONTEXT = ["ein", "fein", "tax", "employer", "federal", "tin"]
 POLICY_CONTEXT = ["policy", "insurance", "certificate", "coi", "coverage", "insured"]
@@ -103,6 +114,11 @@ def load_allowlist(path: str = ALLOWLIST_PATH) -> list[str]:
 
 def load_venues(path: str = VENUELIST_PATH) -> list[str]:
     return load_entries(path)
+
+
+def load_places(path: str = PLACELIST_PATH) -> tuple[list[str], list[str]]:
+    sections = load_list(path)
+    return sections.get("places", []), sections.get("capitalized", [])
 
 
 # Recognizers
@@ -165,6 +181,11 @@ def pattern_recognizers() -> list[PatternRecognizer]:
                           patterns=[Pattern("labeled", _POLICY_RE, POLICY_SCORE),
                                     Pattern("carrier", _CARRIER_RE, CARRIER_SCORE)],
                           context=POLICY_CONTEXT),
+        # LOCATION, so the location rule redacts it; case-sensitive so "in 92618" isn't read as Indiana
+        PatternRecognizer(supported_entity="LOCATION", name="us_zip",
+                          patterns=[Pattern("ca_range", _CA_ZIP_RE, ZIP_SCORE),
+                                    Pattern("state_anchored", _STATE_ZIP_RE, ZIP_SCORE)],
+                          global_regex_flags=CASE_SENSITIVE),
     ]
 
 
@@ -177,22 +198,37 @@ def venue_recognizers(venues: list[str]) -> list[PatternRecognizer]:
                               deny_list_score=VENUE_SCORE, global_regex_flags=CASE_INSENSITIVE)]
 
 
-def custom_recognizers(denylist_path: str = DENYLIST_PATH,
-                       venuelist_path: str = VENUELIST_PATH) -> list[PatternRecognizer]:
+def place_recognizers(places: list[str], capitalized: list[str]) -> list[PatternRecognizer]:
+    # Seeded by seed_place_denylist.py; same two-list split as the names. [capitalized] places are
+    # also everyday English here ("orange" is a lion color), so only the capitalized spelling counts
+    recognizers = []
+    for label, entries, flags in (("places", places, CASE_INSENSITIVE),
+                                  ("places_capitalized", capitalized, CASE_SENSITIVE)):
+        entries = [e for e in dict.fromkeys(entries) if e]
+        if entries:
+            recognizers.append(PatternRecognizer(
+                supported_entity="LOCATION", name=f"denylist_{label}", deny_list=entries,
+                deny_list_score=PLACE_SCORE, global_regex_flags=flags))
+    return recognizers
+
+
+def custom_recognizers(denylist_path: str = DENYLIST_PATH, venuelist_path: str = VENUELIST_PATH,
+                       placelist_path: str = PLACELIST_PATH) -> list[PatternRecognizer]:
     names, ambiguous = load_denylist(denylist_path)
     return (name_recognizers(names, ambiguous)
             + venue_recognizers(load_venues(venuelist_path))
+            + place_recognizers(*load_places(placelist_path))
             + pattern_recognizers())
 
 
 def build_analyzer(denylist_path: str = DENYLIST_PATH, venuelist_path: str = VENUELIST_PATH,
-                   model: str = DEFAULT_MODEL) -> AnalyzerEngine:
+                   placelist_path: str = PLACELIST_PATH, model: str = DEFAULT_MODEL) -> AnalyzerEngine:
     nlp_engine = NlpEngineProvider(nlp_configuration={
         "nlp_engine_name": "spacy",
         "models": [{"lang_code": "en", "model_name": model}],
     }).create_engine()
     registry = RecognizerRegistry()
     registry.load_predefined_recognizers(languages=["en"], nlp_engine=nlp_engine)
-    for recognizer in custom_recognizers(denylist_path, venuelist_path):
+    for recognizer in custom_recognizers(denylist_path, venuelist_path, placelist_path):
         registry.add_recognizer(recognizer)
     return AnalyzerEngine(nlp_engine=nlp_engine, registry=registry, supported_languages=["en"])

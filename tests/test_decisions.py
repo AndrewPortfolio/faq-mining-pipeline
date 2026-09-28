@@ -9,8 +9,7 @@ from shared.decisions import AMBIGUOUS_THRESHOLD, DATETIME_OTHER, Rules, normali
 from shared.pii_recognizers import AMBIGUOUS_ALONE, AMBIGUOUS_RECOGNIZER, AMBIGUOUS_WORD
 
 RULES = Rules(common_datetime=["morning", "October", "business hours"],
-              common_location=["venue", "home"],
-              venues=["Casa Romantica", "St. Regis"])
+              common_location=["home"])
 
 
 def _decide(entity, text, rules=RULES, score=None, recognizer=""):
@@ -80,8 +79,8 @@ class TestCommonWords:
         assert _decide("DATE_TIME", "Business  Hours") == ("keep", "common_word")
 
     def test_lists_are_scoped_to_their_entity(self):
-        assert _decide("LOCATION", "morning") == ("keep", "location_baseline")
-        assert _decide("DATE_TIME", "venue") == (DATETIME_OTHER, "datetime_other")
+        assert _decide("LOCATION", "morning") == ("redact", "location_always")
+        assert _decide("DATE_TIME", "home") == (DATETIME_OTHER, "datetime_other")
 
 
 # DATE_TIME
@@ -129,24 +128,13 @@ class TestDateTime:
 
 class TestLocation:
 
-    def test_baseline_keeps(self):
-        assert _decide("LOCATION", "Irvine") == ("keep", "location_baseline")
+    def test_everything_else_redacts(self):
+        assert _decide("LOCATION", "Irvine") == ("redact", "location_always")
 
-    def test_venue_list_redacts(self):
-        assert _decide("LOCATION", "casa romantica") == ("redact", "venue_list")
-
-    def test_venue_inside_a_longer_span_redacts(self):
-        #spaCy's longer span can win over the venue list's hit, so the text is checked, not the recognizer
-        assert _decide("LOCATION", "Casa Romantica Cultural Center") == ("redact", "venue_list")
-        assert _decide("LOCATION", "the St. Regis Monarch Beach") == ("redact", "venue_list")
-
-    def test_venue_needs_whole_words(self):
-        rules = Rules(venues=["Petals"])
-        assert _decide("LOCATION", "Petalsworth Park", rules) == ("keep", "location_baseline")
-
-    def test_common_word_beats_venue_list(self):
-        rules = Rules(common_location=["venue"], venues=["venue"])
-        assert _decide("LOCATION", "Venue", rules) == ("keep", "common_word")
+    def test_region_words_keep(self):
+        #the common-word check runs before the location rule, so "CA" never reaches it
+        rules = Rules(common_location=["ca"])
+        assert _decide("LOCATION", "CA", rules) == ("keep", "common_word")
 
 
 # loading
@@ -158,16 +146,13 @@ class TestLoad:
         dt.write_text("# generic\nmorning  # most common\n\n", encoding="utf-8")
         loc = tmp_path / "loc.txt"
         loc.write_text("home\n", encoding="utf-8")
-        venues = tmp_path / "venues.txt"
-        venues.write_text("Casa Romantica \n", encoding="utf-8")
-        rules = Rules.load(str(dt), str(loc), str(venues))
+        rules = Rules.load(str(dt), str(loc))
         assert _decide("DATE_TIME", "Morning", rules) == ("keep", "common_word")
         assert _decide("LOCATION", "home", rules) == ("keep", "common_word")
-        assert _decide("LOCATION", "Casa Romantica", rules) == ("redact", "venue_list")
 
     def test_missing_files_still_decide(self, tmp_path):
-        rules = Rules.load(*(str(tmp_path / n) for n in ("a.txt", "b.txt", "c.txt")))
-        assert _decide("LOCATION", "Irvine", rules) == ("keep", "location_baseline")
+        rules = Rules.load(*(str(tmp_path / n) for n in ("a.txt", "b.txt")))
+        assert _decide("LOCATION", "Irvine", rules) == ("redact", "location_always")
         assert _decide("DATE_TIME", "morning", rules) == (DATETIME_OTHER, "datetime_other")
 
     def test_normalize_term(self):

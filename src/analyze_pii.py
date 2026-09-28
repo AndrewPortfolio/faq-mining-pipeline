@@ -18,8 +18,8 @@ import json
 import os
 import sys
 
-from shared.pii_recognizers import (ALLOWLIST_PATH, DENYLIST_PATH, ENTITIES, VENUELIST_PATH,
-                                    build_analyzer, load_allowlist)
+from shared.pii_recognizers import (ALLOWLIST_PATH, DENYLIST_PATH, ENTITIES, PLACELIST_PATH,
+                                    VENUELIST_PATH, build_analyzer, load_allowlist)
 from shared.decisions import COMMON_DATETIME_PATH, COMMON_LOCATION_PATH, Rules
 from shared.pipeline import Checkpoint, Progress, Stats, count_rows, shard_paths
 
@@ -140,6 +140,7 @@ def parse_args(argv=None):
     ap.add_argument("--outdir", default=DEFAULT_OUTDIR)
     ap.add_argument("--denylist", default=DENYLIST_PATH)
     ap.add_argument("--venues", default=VENUELIST_PATH)
+    ap.add_argument("--places", default=PLACELIST_PATH)
     ap.add_argument("--allowlist", default=ALLOWLIST_PATH)
     ap.add_argument("--common-datetime", default=COMMON_DATETIME_PATH)
     ap.add_argument("--common-location", default=COMMON_LOCATION_PATH)
@@ -169,8 +170,8 @@ def run(args) -> int:
     stats.update((checkpoint.load() or {}).get("stats", {}))
 
     allow_list = load_allowlist(args.allowlist)
-    rules = Rules.load(args.common_datetime, args.common_location, args.venues)
-    analyzer = build_analyzer(args.denylist, args.venues)  # loads trf
+    rules = Rules.load(args.common_datetime, args.common_location)
+    analyzer = build_analyzer(args.denylist, args.venues, args.places)  # loads trf
 
     progress = Progress(total=count_rows(args.indir), every=PROGRESS_EVERY,
                         start=stats["emails"], unit="emails", scale=1.0)

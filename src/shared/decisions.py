@@ -6,7 +6,7 @@ from __future__ import annotations
 
 import re
 
-from shared.pii_recognizers import AMBIGUOUS_RECOGNIZER, VENUELIST_PATH, load_entries
+from shared.pii_recognizers import AMBIGUOUS_RECOGNIZER, load_entries
 
 
 # Configuration
@@ -69,19 +69,14 @@ def normalize_term(text: str) -> str:
 
 class Rules:
 
-    def __init__(self, common_datetime=(), common_location=(), venues=()):
+    def __init__(self, common_datetime=(), common_location=()):
         self.common = {"DATE_TIME": {normalize_term(w) for w in common_datetime} - {""},
                        "LOCATION": {normalize_term(w) for w in common_location} - {""}}
-        venues = sorted({normalize_term(v) for v in venues} - {""}, key=len, reverse=True)
-        self.venue_re = (re.compile(rf"(?<!\w)(?:{'|'.join(map(re.escape, venues))})(?!\w)")
-                         if venues else None)
 
     @classmethod
     def load(cls, datetime_path: str = COMMON_DATETIME_PATH,
-             location_path: str = COMMON_LOCATION_PATH,
-             venuelist_path: str = VENUELIST_PATH) -> "Rules":
-        return cls(load_entries(datetime_path), load_entries(location_path),
-                   load_entries(venuelist_path))
+             location_path: str = COMMON_LOCATION_PATH) -> "Rules":
+        return cls(load_entries(datetime_path), load_entries(location_path))
 
     def decide(self, entity_type: str, text: str, score: float | str | None = None,
                recognizer: str = "") -> tuple[str, str]:
@@ -107,9 +102,6 @@ class Rules:
                 return "keep", "duration"
             return DATETIME_OTHER, "datetime_other"
         if entity_type == "LOCATION":
-            # Matched on text, not recognizer name: when spaCy's span overlaps a venue-list hit,
-            # Presidio can keep spaCy's and drop the list's
-            if self.venue_re and self.venue_re.search(term):
-                return "redact", "venue_list"
-            return "keep", "location_baseline"
+            # any place can lead back to a client; region words already returned keep above
+            return "redact", "location_always"
         return "redact", "default"
