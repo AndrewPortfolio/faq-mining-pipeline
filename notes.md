@@ -11,9 +11,16 @@
 - [x] Hardened analyze PII to find EIN and policy numbers 
     - These slipped through the first pass after data review 
     - Ambiguous names like "The", "To", "An", etc. checks have been hardend to check for context --> no longer redacts false positives
-- [ ] Remove Locations/Venues from data
+
+# 9/28/26
+- [x] Remove Locations/Venues from data
     - was brainstorming ideas on how to remove locations/venues 
-        - Remove all vs remove at freq k (arbritrary number)
+        - Remove all vs remove at freq k (arbritrary number) --> Remove all locations: Venues, places, zip 
+
+# 9/29/26
+- [ ] Implement Signature Block Removal 
+    - Reasoning: Lot's of quasi-identifier information found in these blocks 
+- [ ] Review the rest of sample.txt
 
 # xx/xx/26
 - [ ] Run analyze_pii.py
