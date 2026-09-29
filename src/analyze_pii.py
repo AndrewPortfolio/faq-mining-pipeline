@@ -1,12 +1,12 @@
 # Stage 1: flag PII for review. Detection only -- nothing is redacted here
 # Per input shard it writes three files:
-#   emails-NNNNN.spans.csv       the review file you edit (flip decision to keep)
+#   emails-NNNNN.spans.csv       the review file edit (flip decision to keep)
 #   emails-NNNNN.spans.orig.csv  untouched copy, so apply_redactions can spot deleted rows
 #   emails-NNNNN.view.txt        every email with its spans bracketed, for reading straight through
 # Usage:
 #     venv/bin/python src/analyze_pii.py              # resumes; ~1.1 h for all 15 shards
 #     venv/bin/python src/analyze_pii.py --limit 50   # smoke test into data/review/smoke
-#     venv/bin/python src/analyze_pii.py --force      # re-analyze, but never touches edited files
+#     venv/bin/python src/analyze_pii.py --force      # re-analyze, never touches edited files
 
 from __future__ import annotations
 

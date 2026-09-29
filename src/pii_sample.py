@@ -1,10 +1,9 @@
-# Stage 1: a stratified sample for a confidence read before anything is redacted for real
+# Stage 1: sample for a confidence read before anything is redacted for real
 # Uses the whole email, not just the span: PII the recognizers missed never becomes a span
 
-# One email per top redacted PERSON term (the heaviest single decisions), the rest drawn uniformly
-
-# from every analyzed email -- including ones with no spans at all
+# One email per top PERSON term (the heaviest single decisions), the rest drawn uniformly
 # Read for two things: PII left unmarked or marked keep, and FAQ content marked REDACT
+
 # Usage:
 #     venv/bin/python src/pii_sample.py            # -> data/review/sample.txt
 #     venv/bin/python src/pii_sample.py --seed 7   # a different draw
@@ -26,7 +25,7 @@ from shared.pipeline import shard_paths
 
 DEFAULT_SIZE = 300
 DEFAULT_TOP_PERSON = 20
-DEFAULT_SEED = 0  # fixed, so a re-generated sample is the same one you already read
+DEFAULT_SEED = 0  # fixed, so a re-generated sample is the same one already read
 
 
 # Drawing
@@ -42,7 +41,7 @@ def analyzed_emails(indir: str, reviewdir: str) -> list[dict]:
 
 
 def redacted_person(spans: list[dict]) -> list[dict]:
-    # kept ambiguous words ("The") are the most frequent PERSON text, but not names worth a slot
+    # kept ambiguous words ("The", "To", An) are the most frequent PERSON text, but not names worth a slot
     return [s for s in spans if s["entity_type"] == "PERSON" and s["decision"] == "redact"]
 
 
