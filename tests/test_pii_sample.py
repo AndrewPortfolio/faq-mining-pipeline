@@ -101,6 +101,16 @@ class TestRender:
         #apply_redactions redacts every redact span, so a keep over a redact must not read as kept
         body = "at Desert Hills Outlets today"
         spans = [_span(1, "Desert Hills Outlets", body, entity="ORGANIZATION", rule="default"),
-                 _span(1, "Desert Hills", body, entity="LOCATION", decision="keep", rule="location_baseline")]
+                 _span(1, "Desert Hills", body, entity="LOCATION", decision="keep", rule="common_word")]
         _, sample = _run(*_setup(tmp_path, [_email(1, body)], spans), "--size", "1", "--top-person", "0")
         assert "body: at [[REDACT ORGANIZATION/LOCATION: Desert Hills Outlets]] today" in sample
+
+    def test_signature_block_shows_as_one_marker(self, tmp_path):
+        #the sample shows exactly what apply_redactions strips, as one block
+        body = "Can we book two lions?\nThanks,\nThao Nguyen\nthao@example.com | 714-555-0100\n"
+        zone = body[body.index("Thanks,"):]
+        spans = [_span(1, "Thao Nguyen", body), _span(1, "thao@example.com", body, entity="EMAIL_ADDRESS"),
+                 _span(1, "714-555-0100", body, entity="PHONE_NUMBER"),
+                 _span(1, zone, body, entity="SIGNATURE", rule="signature_block")]
+        _, sample = _run(*_setup(tmp_path, [_email(1, body)], spans), "--size", "1", "--top-person", "0")
+        assert "body: Can we book two lions?\n[[REDACT SIGNATURE: Thanks,\nThao Nguyen" in sample

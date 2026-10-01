@@ -230,3 +230,52 @@ class TestResume:
         (outdir / "emails-00000.jsonl").write_text("sentinel\n", encoding="utf-8")
         _run(tmp_path, indir, reviewdir, "--force")
         assert _out(outdir)[0]["body"].startswith("Hi <PERSON>")
+
+
+# signature blocks
+
+def _spans_in(text, field, *pairs):
+    #review rows at the true offsets of each (substring, entity) pair
+    return [_span(field=field, entity=e, start=str(text.index(t)), end=str(text.index(t) + len(t)), text=t)
+            for t, e in pairs]
+
+
+class TestSignatures:
+
+    def test_signature_row_deletes_the_whole_block(self, tmp_path):
+        #the title line ("Events Lead, "MSNP") is no entity; it goes because analyze_pii's block row covers it
+        body = "Can we book two lions?\nThanks,\nThao Nguyen\nEvents Lead, MSNP\nthao@example.com | 714-555-0100\n"
+        zone = body[body.index("Thanks,"):]
+        spans = _spans_in(body, "body", ("Thao Nguyen", "PERSON"), ("thao@example.com", "EMAIL_ADDRESS"),
+                          ("714-555-0100", "PHONE_NUMBER"), (zone, "SIGNATURE"))
+        indir, reviewdir = _setup(tmp_path, [_email(body=body)], spans)
+        code, outdir = _run(tmp_path, indir, reviewdir)
+        row = _out(outdir)[0]
+        assert code == 0
+        assert row["body"] == "Can we book two lions?"
+        assert row["signature_chars"] == len(zone)
+
+    def test_signature_row_set_to_keep_leaves_the_block(self, tmp_path):
+        #flipping the block to keep cancels only the block; the PII inside it still goes
+        body = "Can we book two lions?\nThanks,\nThao Nguyen\nEvents Lead, MSNP\nthao@example.com | 714-555-0100\n"
+        zone = body[body.index("Thanks,"):]
+        spans = _spans_in(body, "body", ("Thao Nguyen", "PERSON"), ("thao@example.com", "EMAIL_ADDRESS"),
+                          ("714-555-0100", "PHONE_NUMBER"))
+        spans.append(_span(entity="SIGNATURE", start=str(body.index(zone)), end=str(len(body)), text=zone,
+                           decision="keep"))
+        indir, reviewdir = _setup(tmp_path, [_email(body=body)], spans)
+        _, outdir = _run(tmp_path, indir, reviewdir)
+        row = _out(outdir)[0]
+        assert row["body"] == ("Can we book two lions?\nThanks,\n<PERSON>\nEvents Lead, MSNP\n"
+                               "<EMAIL_ADDRESS> | <PHONE_NUMBER>\n")
+        assert row["signature_chars"] == 0
+
+    def test_subject_is_redacted_but_never_stripped(self, tmp_path):
+        subject = "Thao Nguyen | thao@example.com | 714-555-0100"
+        spans = _spans_in(subject, "subject", ("Thao Nguyen", "PERSON"), ("thao@example.com", "EMAIL_ADDRESS"),
+                          ("714-555-0100", "PHONE_NUMBER"))
+        indir, reviewdir = _setup(tmp_path, [_email(subject=subject, body="Hello")], spans)
+        _, outdir = _run(tmp_path, indir, reviewdir)
+        row = _out(outdir)[0]
+        assert row["subject"] == "<PERSON> | <EMAIL_ADDRESS> | <PHONE_NUMBER>"
+        assert row["signature_chars"] == 0

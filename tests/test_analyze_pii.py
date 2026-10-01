@@ -141,6 +141,21 @@ class TestOutputs:
                        "Irvine": ("redact", "location_always"),
                        "The": ("keep", "ambiguous_word")}
 
+    def test_signature_block_becomes_one_reviewable_row(self, tmp_path, monkeypatch):
+        analyzer = _FakeAnalyzer(needles=(("Thao Nguyen", "PERSON"), ("thao@example.com", "EMAIL_ADDRESS"),
+                                          ("714-555-0100", "PHONE_NUMBER")))
+        monkeypatch.setattr(analyze_pii, "build_analyzer", lambda *a, **kw: analyzer)
+        body = "Can we book two lions?\nThanks,\nThao Nguyen\nthao@example.com | 714-555-0100\n"
+        indir = _shards(tmp_path, [_row(1, body=body)])
+        _, outdir = _run(tmp_path, indir)
+        rows = [s for s in _spans(outdir / "emails-00000.spans.csv") if s["entity_type"] == "SIGNATURE"]
+        assert [(s["text"], s["decision"], s["rule"]) for s in rows] == [
+            (body[body.index("Thanks,"):], "redact", "signature_block")]
+        #one block marker; the redactions inside it aren't drawn over its offsets
+        view = (outdir / "emails-00000.view.txt").read_text(encoding="utf-8")
+        assert "[[SIGNATURE:Thanks,\nThao Nguyen\nthao@example.com | 714-555-0100\n]]" in view
+        assert "[[PERSON:" not in view
+
     def test_allow_list_suppresses_hits(self, tmp_path, monkeypatch):
         analyzer = _FakeAnalyzer(needles=("WeddingWire",))
         monkeypatch.setattr(analyze_pii, "build_analyzer", lambda *a, **kw: analyzer)
