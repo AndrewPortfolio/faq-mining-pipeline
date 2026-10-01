@@ -2,6 +2,7 @@
 # Reads the extracted shards plus edited review files, writes to data/redacted/
 # A deleted review row, an unknown decision, or a span whose text is gone
 # is a hard error, because each one would quietly leave PII in the output
+# A SIGNATURE row instantly deleted (read by analyze_pii)
 # Usage:
 #     venv/bin/python src/apply_redactions.py           # every shard that has a review file
 #     venv/bin/python src/apply_redactions.py --force   # rewrite shards already redacted
@@ -15,16 +16,19 @@ import hashlib
 import hmac
 import json
 import os
+import re
 import secrets
 import sys
 from email.utils import getaddresses
 
 from presidio_analyzer import RecognizerResult
 from presidio_anonymizer import AnonymizerEngine
+from presidio_anonymizer.entities import OperatorConfig
 
 # the review-file contract lives with the script that writes it
 from analyze_pii import FIELDS, read_shard, write_atomic
 from shared.pipeline import Checkpoint, Stats, shard_paths
+from shared.signatures import SIGNATURE_ENTITY
 
 
 # Configuration
@@ -37,6 +41,10 @@ DEFAULT_KEY_PATH = "data/pii/hash_key"
 DECISIONS = {"redact", "keep"}
 HASH_CHARS = 16       # 64 bits, more than enough to keep 29k senders apart
 MAX_ERRORS = 20       # printed per shard; the rest are counted
+
+# A signature block goes outright ("replace" with "" falls back to <SIGNATURE>); every other
+# redaction keeps its <ENTITY> tag
+OPERATORS = {SIGNATURE_ENTITY: OperatorConfig("redact")}
 
 
 # Hashing
@@ -135,7 +143,7 @@ def check_nothing_deleted(spans: list[dict], original: list[dict], review: str) 
 
 # Redacting
 
-def redact_field(text: str, spans: list[dict], anonymizer) -> tuple[str, int, list[dict]]:
+def redact_field(text: str, spans: list[dict], anonymizer) -> tuple[str, int, list[dict], int]:
     results, unfound = [], []
     for span in spans:
         hits = locate(span, text)
@@ -144,18 +152,23 @@ def redact_field(text: str, spans: list[dict], anonymizer) -> tuple[str, int, li
             continue
         results.extend(RecognizerResult(span["entity_type"] or "PII", s, e, 1.0) for s, e in hits)
     if not results:
-        return text, 0, unfound
-    anonymized = anonymizer.anonymize(text=text, analyzer_results=results)
-    return anonymized.text, len(anonymized.items), unfound
+        return text, 0, unfound, 0
+    # the anonymizer drops the redactions a SIGNATURE row contains, entire block is deleted
+    # blank lines left behind get tidied
+    anonymized = anonymizer.anonymize(text=text, analyzer_results=results, operators=OPERATORS)
+    signature = sum(r.end - r.start for r in results if r.entity_type == SIGNATURE_ENTITY)
+    out = re.sub(r"\n{3,}", "\n\n", anonymized.text).strip() if signature else anonymized.text
+    return out, len(anonymized.items), unfound, signature
 
 
 def redact_row(row: dict, spans: list[dict], key: bytes, anonymizer) -> tuple[dict, list[dict]]:
-    fields, applied, unfound = {}, 0, []
+    fields, applied, unfound, signature_chars = {}, 0, [], 0
     for field in FIELDS:
         wanted = [s for s in spans if s["field"] == field and s["decision"] == "redact"]
-        text, count, missing = redact_field(row.get(field) or "", wanted, anonymizer)
+        text, count, missing, stripped = redact_field(row.get(field) or "", wanted, anonymizer)
         fields[field] = text
         applied += count
+        signature_chars += stripped
         unfound.extend(missing)
     body = fields["body"]
     redacted = {
@@ -179,6 +192,7 @@ def redact_row(row: dict, spans: list[dict], key: bytes, anonymizer) -> tuple[di
                         for att in row.get("attachments") or []],
         "offset": row.get("offset"),
         "n_redacted": applied,
+        "signature_chars": signature_chars,
     }
     return redacted, unfound
 
@@ -199,6 +213,8 @@ def redact_shard(rows: list[dict], spans: list[dict], review: str, key: bytes,
         errors.extend(f"{review}:{span['_line']}: text is no longer in the {span['field']} "
                       f"of {span['email_id']}" for span in unfound)
         stats["spans_redacted"] += redacted["n_redacted"]
+        stats["signature_zones"] += redacted["signature_chars"] > 0
+        stats["signature_chars"] += redacted["signature_chars"]
         out.append(redacted)
     return out, errors
 

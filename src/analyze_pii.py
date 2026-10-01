@@ -22,6 +22,7 @@ from shared.pii_recognizers import (ALLOWLIST_PATH, DENYLIST_PATH, ENTITIES, PLA
                                     VENUELIST_PATH, build_analyzer, load_allowlist)
 from shared.decisions import COMMON_DATETIME_PATH, COMMON_LOCATION_PATH, Rules
 from shared.pipeline import Checkpoint, Progress, Stats, count_rows, shard_paths
+from shared.signatures import SIGNATURE_ENTITY, SIGNATURE_RULE, signature_zones
 
 
 # Configuration
@@ -63,6 +64,26 @@ def context_snippet(text: str, start: int, end: int) -> str:
     return " ".join(snippet.split())
 
 
+def review_row(row: dict, field: str, text: str, start: int, end: int, *, entity_type: str,
+               score: float, recognizer: str, decision: str, rule: str) -> dict:
+    # every review-file row is built here, new columns apply to all fields
+    return {
+        "email_id": row.get("id") or "",
+        "thrid": row.get("thrid") or "",
+        "field": field,
+        "entity_type": entity_type,
+        "start": start,
+        "end": end,
+        "text": text[start:end],
+        "context": context_snippet(text, start, end),
+        "score": round(score, 2),
+        "recognizer": recognizer,
+        "decision": decision,
+        "rule": rule,
+        "note": "",
+    }
+
+
 def row_spans(analyzer, row: dict, allow_list: list[str], rules: Rules) -> list[dict]:
     # decision is pre-filled by shared.decisions; rule names which one fired
     spans = []
@@ -75,21 +96,17 @@ def row_spans(analyzer, row: dict, allow_list: list[str], rules: Rules) -> list[
             recognizer = (result.recognition_metadata or {}).get("recognizer_name", "")
             decision, rule = rules.decide(result.entity_type, text[result.start:result.end],
                                           result.score, recognizer)
-            spans.append({
-                "email_id": row.get("id") or "",
-                "thrid": row.get("thrid") or "",
-                "field": field,
-                "entity_type": result.entity_type,
-                "start": result.start,
-                "end": result.end,
-                "text": text[result.start:result.end],
-                "context": context_snippet(text, result.start, result.end),
-                "score": round(result.score, 2),
-                "recognizer": recognizer,
-                "decision": decision,
-                "rule": rule,
-                "note": "",
-            })
+            spans.append(review_row(row, field, text, result.start, result.end,
+                                    entity_type=result.entity_type, score=result.score,
+                                    recognizer=recognizer, decision=decision, rule=rule))
+    # The signature block is another row
+    body = row.get("body") or ""
+    redact = [(s["start"], s["end"], s["entity_type"]) for s in spans
+              if s["field"] == "body" and s["decision"] == "redact"]
+    for start, end in signature_zones(body, redact):
+        spans.append(review_row(row, "body", body, start, end,
+                                entity_type=SIGNATURE_ENTITY, score=1.0,
+                                recognizer=SIGNATURE_RULE, decision="redact", rule=SIGNATURE_RULE))
     return spans
 
 
@@ -109,7 +126,12 @@ def render_view(row: dict, spans: list[dict]) -> str:
              f"thrid {row.get('thrid')} | {len(spans)} spans"]
     for field in FIELDS:
         text = row.get(field) or ""
-        for span in sorted((s for s in spans if s["field"] == field), key=lambda s: -s["start"]):
+        mine = [s for s in spans if s["field"] == field]
+        # a signature shows as one block otherwise the spans inside it would garble its offsets
+        blocks = [(s["start"], s["end"]) for s in mine if s["entity_type"] == SIGNATURE_ENTITY]
+        shown = [s for s in mine if s["entity_type"] == SIGNATURE_ENTITY
+                 or not any(a <= s["start"] and s["end"] <= b for a, b in blocks)]
+        for span in sorted(shown, key=lambda s: -s["start"]):
             marked = f"[[{span['entity_type']}:{text[span['start']:span['end']]}]]"
             text = f"{text[:span['start']]}{marked}{text[span['end']:]}"
         lines.append(f"{field}: {text}")

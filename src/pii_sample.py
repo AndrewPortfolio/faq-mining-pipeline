@@ -19,6 +19,7 @@ import sys
 from analyze_pii import DEFAULT_INDIR, DEFAULT_OUTDIR, FIELDS, read_shard, review_spans, write_atomic
 from shared.decisions import normalize_term
 from shared.pipeline import shard_paths
+from shared.signatures import SIGNATURE_ENTITY
 
 
 # Configuration
@@ -90,7 +91,9 @@ def marker(text: str, cluster: dict) -> str:
     members = cluster["spans"]
     shown = text[cluster["start"]:cluster["end"]]
     if any(s["decision"] == "redact" for s in members):
-        return f"[[REDACT {'/'.join(dict.fromkeys(s['entity_type'] for s in members))}: {shown}]]"
+        types = ([SIGNATURE_ENTITY] if any(s["entity_type"] == SIGNATURE_ENTITY for s in members)
+                 else dict.fromkeys(s["entity_type"] for s in members))
+        return f"[[REDACT {'/'.join(types)}: {shown}]]"
     why = "/".join(dict.fromkeys(f"{s['entity_type']} {s.get('rule') or '?'}" for s in members))
     return f"[[keep {why}: {shown}]]"
 
@@ -101,7 +104,10 @@ def render(email: dict, spans: list[dict], n: int, total: int, reason: str) -> s
              f"{len(spans)} spans ({redact} redact, {len(spans) - redact} keep)"]
     for field in FIELDS:
         text = email.get(field) or ""
-        for cluster in reversed(clusters([s for s in spans if s["field"] == field])):
+        # a SIGNATURE row set to keep changes nothing in the output, so it isn't drawn
+        shown = [s for s in spans if s["field"] == field
+                 and not (s["entity_type"] == SIGNATURE_ENTITY and s["decision"] != "redact")]
+        for cluster in reversed(clusters(shown)):
             text = f"{text[:cluster['start']]}{marker(text, cluster)}{text[cluster['end']:]}"
         lines.append(f"{field}: {text}")
     return "\n".join(lines) + "\n"
