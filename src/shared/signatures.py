@@ -56,7 +56,7 @@ GREETING = re.compile(r"^\W*(?:hi|hello|hey|dear|greetings|good (?:morning|after
 # Where a signature starts, when the sender wrote one
 SIGN_OFF = re.compile(r"^\W*(?:best(?: regards| wishes)?|kind regards|warm(?:est)? regards|warmly|regards|"
                       r"sincerely|cheers|thanks(?: so much| again)?|thank you(?: so much)?|many thanks|"
-                      r"respectfully|with gratitude|talk soon|xoxo)\W*$", re.IGNORECASE)
+                      r"respectfully|with gratitude|talk soon|xoxo|bless(?:ings)?)\W*$", re.IGNORECASE)
 
 _WORD = re.compile(r"[^\W\d_]+(?:['’][^\W\d_]+)?")
 _BULLET = re.compile(r"^\s*(?:[-*•·]|\d{1,2}[.)])\s+")
