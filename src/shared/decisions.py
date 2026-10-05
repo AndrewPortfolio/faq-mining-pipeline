@@ -37,6 +37,7 @@ CALENDAR_RE = re.compile(
     rf"|\b{_DAY}{_ORD}?\s+(?:of\s+)?{_MONTH}\b"    # 22 October, 22nd of Oct
     r"|\b\d{1,2}/\d{1,2}(?:/\d{2,4})?\b"           # 10/22, 10/22/2027
     r"|\b\d{1,2}-\d{1,2}-\d{2,4}\b"                # 10-22-2027; the year is required or "15-20 mins" matches
+    r"|\b\d{1,2}\.\d{1,2}\.\d{2,4}\b"              # 8.23.27; three parts, so "1.5 hours" stays a duration
     r"|\b\d{4}-\d{2}-\d{2}\b"                      # 2027-10-22
     rf"|\b{_DAY}{_ORD}\b",                         # the 22nd
     re.IGNORECASE)

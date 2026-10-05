@@ -24,7 +24,7 @@ PLACELIST_PATH = "data/pii/place_denylist.txt"
 # "Vietnamese tea ceremony" is FAQ content, not PII
 ENTITIES = ["PERSON", "EMAIL_ADDRESS", "PHONE_NUMBER", "LOCATION", "DATE_TIME", "ORGANIZATION",
             "URL", "CREDIT_CARD", "US_SSN", "STREET_ADDRESS", "SOCIAL_HANDLE",
-            "US_EIN", "INSURANCE_POLICY"]
+            "US_EIN", "INSURANCE_POLICY", "ORDER_ID"]
 
 # [names] matches any case because lowercase names ("pls send to huynh") are where trf fails;
 # [ambiguous] needs the capital, or everyday words (do, he, song) fire on every sentence
@@ -46,6 +46,8 @@ VENUE_NAME_SCORE = 0.5  # every LOCATION redacts, so this only orders review row
 EIN_SCORE = 0.4         # the shape alone is weak; "tax id" / "ein" nearby lifts it to 0.75
 POLICY_SCORE = 0.6      # the "Policy No:" label is already part of the match
 CARRIER_SCORE = 0.8     # a confirmed carrier prefix, found bare in subject lines
+ORDER_SCORE = 0.6       # the "Order #" label is already part of the match, as with policies
+DOTTED_DATE_SCORE = 0.6 # same as Presidio's own dotted pattern; DATE_TIME isn't score-gated anyway
 
 # number + up to 4 name words + a street type, with an optional unit --> "1234 Oak St Apt 5"
 _STREET_RE = (r"\b\d{1,6}\s+(?:[A-Za-z][\w.'-]*\s+){0,4}"
@@ -66,6 +68,17 @@ _EIN_RE = r"\b\d{2}-\d{7}\b"
 _POLICY_RE = (r"(?<=\b(?:policy|certificate|cert)\s*(?:no\.?|number|#)\s*[:#-]?\s*)"
               r"(?=[A-Za-z0-9-]*\d)[A-Za-z0-9][A-Za-z0-9-]{3,19}\b")
 _CARRIER_RE = r"\bNAEP\d{4,10}\b"
+
+# Order/invoice/tracking numbers from purchases that reached the inbox. Same shape as the policy rule: the label
+# anchors the match and stays readable. 4+ digits keeps "booking 10am" out, and a bare year isn't an ID
+_ORDER_RE = (r"(?<=\b(?:order|invoice|receipt|confirmation|tracking|transaction|reservation|booking)"
+             r"\s*(?:no\.?|number|num|id|#)?\s*[:#-]?\s*)"
+             r"(?!(?:19|20)\d{2}(?![\w-]))(?=(?:[A-Za-z-]*\d){4})[A-Za-z0-9][A-Za-z0-9-]{3,29}\b")
+
+# Month-first dotted dates ("8.23.27"): Presidio's DateRecognizer only knows day-first dd.mm.yy, so any day
+# past the 12th slipped through. (?!\d) rather than \b, so form text glued on ("Date:4.5.27Time:") still matches
+_DOTTED_DATE_RE = (r"(?<!\d)(?<!\d\.)(?:0?[1-9]|1[0-2])\.(?:0?[1-9]|[12]\d|3[01])\.(?:\d{4}|\d{2})"
+                   r"(?!\d)(?!\.\d)")
 
 # California's zip range is the only bare 9xxxx number this inbox writes: 12 of 12 sampled were zips
 # ("Costa Mesa 92626", "Ca 92832"). The guards keep prices ($95,000), decimals and #refs out
@@ -91,6 +104,7 @@ _VENUE_GENERIC = {"Elementary", "Middle", "High", "Junior", "Main"} | set(_VENUE
 
 EIN_CONTEXT = ["ein", "fein", "tax", "employer", "federal", "tin"]
 POLICY_CONTEXT = ["policy", "insurance", "certificate", "coi", "coverage", "insured"]
+ORDER_CONTEXT = ["order", "invoice", "receipt", "tracking", "shipped", "purchase", "payment"]
 
 
 # Name lists
@@ -212,6 +226,11 @@ def pattern_recognizers() -> list[PatternRecognizer]:
                           patterns=[Pattern("labeled", _POLICY_RE, POLICY_SCORE),
                                     Pattern("carrier", _CARRIER_RE, CARRIER_SCORE)],
                           context=POLICY_CONTEXT),
+        PatternRecognizer(supported_entity="ORDER_ID", name="order_id",
+                          patterns=[Pattern("labeled", _ORDER_RE, ORDER_SCORE)], context=ORDER_CONTEXT),
+        # DATE_TIME, so the calendar rule redacts it
+        PatternRecognizer(supported_entity="DATE_TIME", name="dotted_date",
+                          patterns=[Pattern("month_first", _DOTTED_DATE_RE, DOTTED_DATE_SCORE)]),
         # LOCATION, so the location rule redacts it; case-sensitive so "in 92618" isn't read as Indiana
         PatternRecognizer(supported_entity="LOCATION", name="us_zip",
                           patterns=[Pattern("ca_range", _CA_ZIP_RE, ZIP_SCORE),

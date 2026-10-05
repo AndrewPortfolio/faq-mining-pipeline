@@ -4,6 +4,8 @@
 # Recognizer doesn't catch them one by one 
 # Signature are marked by the redacted PII packed around them
 # a name, a company and contact details within a few lines -- so the whole cluster goes
+# Without contact details, a short line opening with the sender's name near the end starts it instead,
+# and the sign-off above it joins in; it stops at a P.S. or the sender talking again
 # Quoted replies are already cut at extraction, so a signature is the tail of the sender's own text
 # Every rule errs toward keeping text: a question, a line in the sender's own voice and a form field
 # are never stripped (measured on the inbox: 0 of 24,015 question marks lost)
@@ -30,6 +32,11 @@ CONTACT_TYPES = {"EMAIL_ADDRESS", "PHONE_NUMBER", "URL", "STREET_ADDRESS", "SOCI
 # The website form packs entities like a signature does, but it is the request
 FORM_MARKERS = ("Date/Time of Event", "Message (Please", "Day of Contact", "Total: $")
 
+# The tail rule, for signatures without contact details: the name line sits among the last 4 lines
+# and is short once its entities are masked ("<PERSON> | SWE | City of Awesome")
+TAIL_LINES = 4
+NAME_WORDS = 6
+
 # Any template's event field: "Wedding Date:", "Date of wedding:", "Insurance Required?(Yes/No):"
 # Contact labels ("Phone:", "Fax:", "c:") are signature material, so they're left out on purpose
 EVENT_LABEL = re.compile(
@@ -53,10 +60,16 @@ DISCLAIMER = re.compile(r"confidential|sole use of|intended (?:only )?for|intend
                         r"clicking the link does not work|unsubscribe", re.IGNORECASE)
 # A signature never opens with a greeting; a zone that would is the whole message
 GREETING = re.compile(r"^\W*(?:hi|hello|hey|dear|greetings|good (?:morning|afternoon|evening))\b", re.IGNORECASE)
-# Where a signature starts, when the sender wrote one
-SIGN_OFF = re.compile(r"^\W*(?:best(?: regards| wishes)?|kind regards|warm(?:est)? regards|warmly|regards|"
-                      r"sincerely|cheers|thanks(?: so much| again)?|thank you(?: so much)?|many thanks|"
-                      r"respectfully|with gratitude|talk soon|xoxo|bless(?:ings)?)\W*$", re.IGNORECASE)
+# Where a signature starts, when the sender wrote one; phrases can chain: "Blessings, kindly,"
+_SIGN_OFF_PHRASE = (r"(?:best(?: regards| wishes)?|all the best|kind(?:est)? regards|kindly|warm(?:est)? regards|"
+                    r"warm wishes|warmly|warmest|regards|sincerely(?: yours)?|respectfully(?: yours)?|cheers|"
+                    r"thanks(?: so much| again)?|thank you(?: so much| again| very much| kindly)?|many thanks|"
+                    r"ty|thx|with (?:gratitude|love)|gratefully|love|take care|talk soon|xoxo|xo|"
+                    r"have a (?:great|good|nice|wonderful|blessed) (?:day|weekend|evening|night|one)|"
+                    r"(?:god |many )?bless(?:ings)?)")
+SIGN_OFF = re.compile(rf"^\W*{_SIGN_OFF_PHRASE}(?:\W+(?:and\s+)?{_SIGN_OFF_PHRASE})*\W*$", re.IGNORECASE)
+# A note after the signature is the sender talking again: "P.S. we can bring drums too"
+PS = re.compile(r"^\W*p\.?\s?(?:p\.?\s?)?s\b", re.IGNORECASE)
 
 _WORD = re.compile(r"[^\W\d_]+(?:['’][^\W\d_]+)?")
 _BULLET = re.compile(r"^\s*(?:[-*•·]|\d{1,2}[.)])\s+")
@@ -73,14 +86,40 @@ def _sentence(line: str) -> bool:
 
 
 def _personal(line: str) -> bool:
-    # a question, or a line in the sender's own voice
-    if "?" in line:
+    # a question, a P.S., or a line in the sender's own voice
+    if "?" in line or PS.match(line):
         return True
     if DISCLAIMER.search(line) or CALL_TO_ACTION.search(line) or SIGN_OFF.match(line):
         return False
     if _sentence(line) and _BULLET.match(line):
         return True                                   # a signature doesn't list full sentences
     return len(_WORD.findall(line)) >= 4 and bool(PERSONAL.search(line))
+
+
+def _talking(line: str) -> bool:
+    # below a signature only the sender's voice, a greeting, an event field or a form is message again;
+    # impersonal sentences there are taglines, as in _mark
+    return (_personal(line) or bool(GREETING.match(line) or EVENT_LABEL.match(line))
+            or any(m in line for m in FORM_MARKERS))
+
+
+def _title_case(line: str) -> bool:
+    # a few mostly-capitalized words, like a name, title or org line -- not a sentence
+    words = _WORD.findall(line)
+    return len(words) <= NAME_WORDS and 2 * sum(w.islower() for w in words) <= len(words)
+
+
+def _name_line(text: str, masked: str, a: int, b: int, persons: set[int]) -> bool:
+    # opens with a name and goes on in a few title-case words: "<PERSON> | SWE | City of Awesome"
+    lead = re.search(r"[^\W_]", text[a:b])
+    return (lead is not None and a + lead.start() in persons and _title_case(masked[a:b])
+            and not _talking(masked[a:b]))
+
+
+def _signed_line(masked: str, a: int, b: int, persons: set[int]) -> bool:
+    # a sign-off with the name on the same line: "Thanks, <PERSON>"
+    line = masked[a:b]
+    return bool(SIGN_OFF.match(line)) and "?" not in line and any(a <= p < b for p in persons)
 
 
 def _mark(masked: str, start: int, end: int, first_contact: int) -> list[tuple[int, int, bool]]:
@@ -143,9 +182,51 @@ def _sign_off(masked: str, s: int, first_contact: int) -> int | None:
     return anchor
 
 
+def _sign_off_above(text: str, masked: str, s: int) -> int:
+    # the sign-offs right above line start s open the signature, blank lines between or not: "Kindly,\n\n<PERSON>"
+    top = s
+    while top > 0:
+        start = text.rfind("\n", 0, top - 1) + 1
+        if SIGN_OFF.match(masked[start:top - 1]) and "?" not in masked[start:top - 1]:   # \W* would eat a "?"
+            s = top = start
+        elif not text[start:top - 1].strip():
+            top = start
+        else:
+            break
+    return s
+
+
+def _tail_zone(text: str, masked: str, spans) -> tuple[int, int] | None:
+    # A signature with no contact details: a name line near the end, the sign-off above it, and the rest below
+    # it down to the end or a P.S. A sign-off carrying the name ("Thanks, <PERSON>") counts too, when only
+    # signature lines follow it. Only a zone when it strips words the redactions left (a title, an org)
+    rows, pos = [], 0
+    for line in text.split("\n"):
+        if line.strip():
+            rows.append((pos, pos + len(line)))
+        pos += len(line) + 1
+    cut = len(rows)
+    while cut and _talking(masked[rows[cut - 1][0]:rows[cut - 1][1]]):
+        cut -= 1                                      # a trailing P.S. isn't part of the signature
+    persons = {a for a, _, t in spans if t == "PERSON"}
+    for top, bottom in rows[max(0, cut - TAIL_LINES):cut]:   # top down; a candidate that fails hands on to the next
+        signed = _signed_line(masked, top, bottom, persons)
+        if not (signed or _name_line(text, masked, top, bottom, persons)):
+            continue
+        start = _sign_off_above(text, masked, top)
+        if not any(b < start for _, b in rows):
+            continue                                  # nothing above it: that's the whole message
+        end = next((a for a, b in rows if a > top and _talking(masked[a:b])), len(text))
+        if signed and not all(_title_case(masked[a:b]) for a, b in rows if top < a < end):
+            continue                                  # a mid-message "Thanks <PERSON>!" with text below it
+        if any(_WORD.findall(masked[a:b]) and not SIGN_OFF.match(masked[a:b]) for a, b in rows if start <= a < end):
+            return start, end                         # it strips words the redactions left
+    return None
+
+
 def signature_zones(text: str, spans) -> list[tuple[int, int]]:
     # spans: (start, end, entity_type) of every redaction decided for this text
-    # Returns at most one zone, (start, len(text)): the signature runs to the end of the message
+    # Returns at most one zone: a contact block's runs to the end of the message, the tail rule's can stop at a P.S.
     spans = sorted(spans)
     chars = list(text)
     for a, b, _ in spans:
@@ -174,10 +255,17 @@ def signature_zones(text: str, spans) -> list[tuple[int, int]]:
             s = anchor
         elif any(_personal(line) or GREETING.match(line) for line in masked[s:min(contacts)].split("\n")):
             continue                                  # a message sits above the contact details
+        s = _sign_off_above(text, masked, s)          # "Best," over a blank line still opens it
         for a, b, _ in spans:                         # never cut through a redaction
             if a < s < b:
                 s = a
         while s > 0 and text[s - 1] == "<":
             s -= 1
         starts.append(s)
-    return [(min(starts), len(text))] if starts else []
+    tail = _tail_zone(text, masked, spans)
+    if starts:
+        start = min(starts)
+        if tail and tail[0] < start <= tail[1]:       # the tail's sign-off and name sit right above the block
+            start = tail[0]
+        return [(start, len(text))]
+    return [tail] if tail else []
