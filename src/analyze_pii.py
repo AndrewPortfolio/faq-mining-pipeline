@@ -1,25 +1,28 @@
 # Stage 1: flag PII for review. Detection only -- nothing is redacted here
 # Per input shard it writes three files:
-#   emails-NNNNN.spans.csv       the review file you edit (flip decision to keep)
+#   emails-NNNNN.spans.csv       the review file edit (flip decision to keep)
 #   emails-NNNNN.spans.orig.csv  untouched copy, so apply_redactions can spot deleted rows
 #   emails-NNNNN.view.txt        every email with its spans bracketed, for reading straight through
 # Usage:
 #     venv/bin/python src/analyze_pii.py              # resumes; ~1.1 h for all 15 shards
 #     venv/bin/python src/analyze_pii.py --limit 50   # smoke test into data/review/smoke
-#     venv/bin/python src/analyze_pii.py --force      # re-analyze, but never touches edited files
+#     venv/bin/python src/analyze_pii.py --force      # re-analyze, never touches edited files
 
 from __future__ import annotations
 
 import argparse
 import csv
+import glob
 import io
 import json
 import os
 import sys
 
-from shared.pii_recognizers import (ALLOWLIST_PATH, DENYLIST_PATH, ENTITIES, VENUELIST_PATH,
-                                    build_analyzer, load_allowlist)
+from shared.pii_recognizers import (ALLOWLIST_PATH, DENYLIST_PATH, ENTITIES, PLACELIST_PATH,
+                                    VENUELIST_PATH, build_analyzer, load_allowlist)
+from shared.decisions import COMMON_DATETIME_PATH, COMMON_LOCATION_PATH, Rules
 from shared.pipeline import Checkpoint, Progress, Stats, count_rows, shard_paths
+from shared.signatures import SIGNATURE_ENTITY, SIGNATURE_RULE, signature_zones
 
 
 # Configuration
@@ -34,7 +37,7 @@ CONTEXT_CHARS = 40    # enough either side to judge a hit without opening view.t
 PROGRESS_EVERY = 200  # ~30 s between lines at trf's ~7 emails/s
 
 COLUMNS = ["email_id", "thrid", "field", "entity_type", "start", "end", "text", "context",
-           "score", "recognizer", "decision", "note"]
+           "score", "recognizer", "decision", "rule", "note"]
 
 
 # Reading
@@ -42,6 +45,15 @@ COLUMNS = ["email_id", "thrid", "field", "entity_type", "start", "end", "text", 
 def read_shard(path: str) -> list[dict]:
     with open(path, encoding="utf-8") as fh:
         return [json.loads(line) for line in fh if line.strip()]
+
+
+def review_spans(reviewdir: str) -> list[dict]:
+    # every shard's current review file; the .orig copies don't match the pattern
+    spans = []
+    for path in sorted(glob.glob(os.path.join(reviewdir, "emails-*.spans.csv"))):
+        with open(path, encoding="utf-8", newline="") as fh:
+            spans.extend(csv.DictReader(fh))
+    return spans
 
 
 # Detection
@@ -52,8 +64,28 @@ def context_snippet(text: str, start: int, end: int) -> str:
     return " ".join(snippet.split())
 
 
-def row_spans(analyzer, row: dict, allow_list: list[str]) -> list[dict]:
-    # decision is pre-filled to redact --> all rows are redacted 
+def review_row(row: dict, field: str, text: str, start: int, end: int, *, entity_type: str,
+               score: float, recognizer: str, decision: str, rule: str) -> dict:
+    # every review-file row is built here, new columns apply to all fields
+    return {
+        "email_id": row.get("id") or "",
+        "thrid": row.get("thrid") or "",
+        "field": field,
+        "entity_type": entity_type,
+        "start": start,
+        "end": end,
+        "text": text[start:end],
+        "context": context_snippet(text, start, end),
+        "score": round(score, 2),
+        "recognizer": recognizer,
+        "decision": decision,
+        "rule": rule,
+        "note": "",
+    }
+
+
+def row_spans(analyzer, row: dict, allow_list: list[str], rules: Rules) -> list[dict]:
+    # decision is pre-filled by shared.decisions; rule names which one fired
     spans = []
     for field in FIELDS:
         text = row.get(field) or ""
@@ -61,20 +93,20 @@ def row_spans(analyzer, row: dict, allow_list: list[str]) -> list[dict]:
             continue
         results = analyzer.analyze(text=text, language="en", entities=ENTITIES, allow_list=allow_list)
         for result in sorted(results, key=lambda r: (r.start, -r.score)):
-            spans.append({
-                "email_id": row.get("id") or "",
-                "thrid": row.get("thrid") or "",
-                "field": field,
-                "entity_type": result.entity_type,
-                "start": result.start,
-                "end": result.end,
-                "text": text[result.start:result.end],
-                "context": context_snippet(text, result.start, result.end),
-                "score": round(result.score, 2),
-                "recognizer": (result.recognition_metadata or {}).get("recognizer_name", ""),
-                "decision": "redact",
-                "note": "",
-            })
+            recognizer = (result.recognition_metadata or {}).get("recognizer_name", "")
+            decision, rule = rules.decide(result.entity_type, text[result.start:result.end],
+                                          result.score, recognizer)
+            spans.append(review_row(row, field, text, result.start, result.end,
+                                    entity_type=result.entity_type, score=result.score,
+                                    recognizer=recognizer, decision=decision, rule=rule))
+    # The signature block is another row
+    body = row.get("body") or ""
+    redact = [(s["start"], s["end"], s["entity_type"]) for s in spans
+              if s["field"] == "body" and s["decision"] == "redact"]
+    for start, end in signature_zones(body, redact):
+        spans.append(review_row(row, "body", body, start, end,
+                                entity_type=SIGNATURE_ENTITY, score=1.0,
+                                recognizer=SIGNATURE_RULE, decision="redact", rule=SIGNATURE_RULE))
     return spans
 
 
@@ -94,7 +126,12 @@ def render_view(row: dict, spans: list[dict]) -> str:
              f"thrid {row.get('thrid')} | {len(spans)} spans"]
     for field in FIELDS:
         text = row.get(field) or ""
-        for span in sorted((s for s in spans if s["field"] == field), key=lambda s: -s["start"]):
+        mine = [s for s in spans if s["field"] == field]
+        # a signature shows as one block otherwise the spans inside it would garble its offsets
+        blocks = [(s["start"], s["end"]) for s in mine if s["entity_type"] == SIGNATURE_ENTITY]
+        shown = [s for s in mine if s["entity_type"] == SIGNATURE_ENTITY
+                 or not any(a <= s["start"] and s["end"] <= b for a, b in blocks)]
+        for span in sorted(shown, key=lambda s: -s["start"]):
             marked = f"[[{span['entity_type']}:{text[span['start']:span['end']]}]]"
             text = f"{text[:span['start']]}{marked}{text[span['end']:]}"
         lines.append(f"{field}: {text}")
@@ -125,7 +162,10 @@ def parse_args(argv=None):
     ap.add_argument("--outdir", default=DEFAULT_OUTDIR)
     ap.add_argument("--denylist", default=DENYLIST_PATH)
     ap.add_argument("--venues", default=VENUELIST_PATH)
+    ap.add_argument("--places", default=PLACELIST_PATH)
     ap.add_argument("--allowlist", default=ALLOWLIST_PATH)
+    ap.add_argument("--common-datetime", default=COMMON_DATETIME_PATH)
+    ap.add_argument("--common-location", default=COMMON_LOCATION_PATH)
     ap.add_argument("--limit", type=int, default=0,
                     help="smoke test: analyze N emails into <outdir>/smoke")
     ap.add_argument("--force", action="store_true",
@@ -152,7 +192,8 @@ def run(args) -> int:
     stats.update((checkpoint.load() or {}).get("stats", {}))
 
     allow_list = load_allowlist(args.allowlist)
-    analyzer = build_analyzer(args.denylist, args.venues)  # loads trf
+    rules = Rules.load(args.common_datetime, args.common_location)
+    analyzer = build_analyzer(args.denylist, args.venues, args.places)  # loads trf
 
     progress = Progress(total=count_rows(args.indir), every=PROGRESS_EVERY,
                         start=stats["emails"], unit="emails", scale=1.0)
@@ -177,7 +218,7 @@ def run(args) -> int:
 
             spans, views = [], []
             for row in rows:
-                found = row_spans(analyzer, row, allow_list)
+                found = row_spans(analyzer, row, allow_list, rules)
                 spans.extend(found)
                 views.append(render_view(row, found))
                 stats["emails"] += 1
@@ -188,6 +229,7 @@ def run(args) -> int:
                     stats["missing_id"] += 1
                 for span in found:
                     stats[span["entity_type"]] += 1
+                    stats[f"decision_{span['decision']}"] += 1
                 progress.tick(stats["emails"], note=os.path.basename(base))
 
             table = render_csv(spans)
