@@ -9,8 +9,9 @@ from spacy.tokens import Doc
 from spacy.vocab import Vocab
 
 from shared.pii_recognizers import (AMBIGUOUS_ALONE, AMBIGUOUS_IN_ENTITY, AMBIGUOUS_PAIR,
-                                    AMBIGUOUS_RECOGNIZER, AMBIGUOUS_WORD, CARRIER_SCORE, EIN_SCORE,
-                                    ENTITIES, NAME_SCORE, PLACE_SCORE, POLICY_SCORE, VENUE_NAME_SCORE,
+                                    AMBIGUOUS_RECOGNIZER, AMBIGUOUS_WORD, CARRIER_SCORE, DOTTED_DATE_SCORE,
+                                    EIN_SCORE, ENTITIES, NAME_SCORE, ORDER_SCORE, PLACE_SCORE, POLICY_SCORE,
+                                    VENUE_NAME_SCORE,
                                     VENUE_SCORE, ZIP_SCORE, custom_recognizers, load_allowlist,
                                     load_denylist, load_places, load_venues, name_recognizers,
                                     pattern_recognizers, place_recognizers, venue_recognizers)
@@ -139,9 +140,9 @@ class TestCustomRecognizers:
         recognizers = custom_recognizers(names, venues, places)
         entities = {e for r in recognizers for e in r.supported_entities}
         assert entities == {"PERSON", "LOCATION", "STREET_ADDRESS", "SOCIAL_HANDLE",
-                            "US_EIN", "INSURANCE_POLICY"}
+                            "US_EIN", "INSURANCE_POLICY", "ORDER_ID", "DATE_TIME"}
         assert {"denylist_venues", "denylist_places", "denylist_places_capitalized",
-                "us_zip", "venue_name"} <= {r.name for r in recognizers}
+                "us_zip", "venue_name", "order_id", "dotted_date"} <= {r.name for r in recognizers}
 
 
 class TestEin:
@@ -157,7 +158,7 @@ class TestEin:
 
     def test_is_in_entities(self):
         #a recognizer whose entity isn't passed to analyze() gets filtered out silently
-        assert {"US_EIN", "INSURANCE_POLICY"} <= set(ENTITIES)
+        assert {"US_EIN", "INSURANCE_POLICY", "ORDER_ID"} <= set(ENTITIES)
 
 
 class TestInsurancePolicy:
@@ -181,6 +182,42 @@ class TestInsurancePolicy:
         recognizer = _by_entity(pattern_recognizers(), "INSURANCE_POLICY")
         assert _hits(recognizer, "[cid:image001.png@01DB9E12.FB123456]") == []
         assert _hits(recognizer, "Document '2ND-TYLE-123456-01-Performance Agreement' signed") == []
+
+
+class TestOrderId:
+
+    def test_labeled_numbers_keep_the_label_readable(self):
+        #personal purchases reached the inbox; only the number goes
+        recognizer = _named(pattern_recognizers(), "order_id")
+        assert _hits(recognizer, "Your order #112-3456789-1234567 has shipped") == [
+            ("112-3456789-1234567", ORDER_SCORE)]
+        assert _hits(recognizer, "Invoice #1001 attached") == [("1001", ORDER_SCORE)]
+        assert _hits(recognizer, "tracking number 1Z999AA10123456784") == [("1Z999AA10123456784", ORDER_SCORE)]
+
+    def test_needs_four_digits_and_not_a_year(self):
+        recognizer = _named(pattern_recognizers(), "order_id")
+        assert _hits(recognizer, "We'd like to order 2 lions, booking 10am") == []
+        assert _hits(recognizer, "Thanks for booking 2027 with us") == []
+
+
+# dotted dates
+
+class TestDottedDate:
+
+    def test_month_first_dates(self):
+        #day-first is all Presidio knows, so "8.23.27" (day 23) never matched before
+        recognizer = _named(pattern_recognizers(), "dotted_date")
+        assert _hits(recognizer, "Re: Lion Dance Wedding Performance 8.23.27") == [("8.23.27", DOTTED_DATE_SCORE)]
+        assert _hits(recognizer, "Wedding 1.11.2027") == [("1.11.2027", DOTTED_DATE_SCORE)]
+
+    def test_form_text_glued_on(self):
+        #html-to-text drops the break between form fields; \b would miss the date
+        recognizer = _named(pattern_recognizers(), "dotted_date")
+        assert _hits(recognizer, "Date:4.5.27Time: 6pm") == [("4.5.27", DOTTED_DATE_SCORE)]
+
+    def test_ignores_decimals_prices_and_addresses(self):
+        recognizer = _named(pattern_recognizers(), "dotted_date")
+        assert _hits(recognizer, "1.5 hours for $7.50 at 192.168.1.10, v1.2.3") == []
 
 
 # ambiguous-word rescoring

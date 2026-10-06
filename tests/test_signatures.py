@@ -74,6 +74,43 @@ class TestStripped:
                          ("anna@example.com", "EMAIL_ADDRESS"))
         assert gone.startswith("Best,") and "CONFIDENTIALITY" in gone
 
+    def test_sign_off_over_a_blank_line_with_no_contacts(self):
+        #no contact detail meant no cluster, so the title stayed behind the redacted name
+        body = "Hi, can we book two lions for the 3rd?\nKindly, \n\nJordan Quality Assurance Supreme Leader\n"
+        assert _stripped(body, ("Jordan", "PERSON")) == "Kindly, \n\nJordan Quality Assurance Supreme Leader\n"
+
+    def test_name_line_without_a_sign_off(self):
+        body = "Hi, can we book two lions for the 3rd?\nJordan | SWE | City of Awesome\n"
+        assert _stripped(body, ("Jordan", "PERSON")) == "Jordan | SWE | City of Awesome\n"
+
+    def test_blank_line_between_the_sign_off_and_a_contact_block(self):
+        body = ("Hi, can we book two lions for the 3rd?\nBest,\n\nJordan Reyes\nQA Lead | Acme Corp\n"
+                "714-555-0100 | jordan@example.com\n")
+        gone = _stripped(body, ("Jordan Reyes", "PERSON"), ("Acme Corp", "ORGANIZATION"),
+                         ("714-555-0100", "PHONE_NUMBER"), ("jordan@example.com", "EMAIL_ADDRESS"))
+        assert gone.startswith("Best,\n\nJordan Reyes")
+
+    def test_chained_sign_off(self):
+        body = "Hi, can we book two lions?\nBlessings, kindly,\n\nJordan Reyes\nEvent Coordinator\n"
+        assert _stripped(body, ("Jordan Reyes", "PERSON")) == "Blessings, kindly,\n\nJordan Reyes\nEvent Coordinator\n"
+
+    def test_signature_above_a_ps_goes_and_the_ps_stays(self):
+        #a P.S. used to cancel the whole zone, title and all
+        body = ("Hi, can we book two lions?\nBest,\nJordan Reyes\nQuality Assurance Lead\n714-555-0100\n"
+                "P.S. Can you also bring drums?\n")
+        gone = _stripped(body, ("Jordan Reyes", "PERSON"), ("714-555-0100", "PHONE_NUMBER"))
+        assert gone == "Best,\nJordan Reyes\nQuality Assurance Lead\n714-555-0100\n"
+
+    def test_sign_off_and_name_on_one_line(self):
+        body = "Hi, can we book two lions?\nThanks, Jordan\nEvent Coordinator | Acme Events\n"
+        assert _stripped(body, ("Jordan", "PERSON")) == "Thanks, Jordan\nEvent Coordinator | Acme Events\n"
+
+    def test_courtesy_line_does_not_hide_the_signature_below(self):
+        #"Thanks Jordan!" has a message below it, so the name line further down gets its turn
+        body = ("Hi, can we book two lions?\nThanks Jordan!\nWe'd love to have you at the party.\nKim Lee\n"
+                "Event Coordinator\n")
+        assert _stripped(body, ("Jordan", "PERSON"), ("Kim Lee", "PERSON")) == "Kim Lee\nEvent Coordinator\n"
+
 
 # what stays
 
@@ -141,3 +178,22 @@ class TestKept:
         gone = _stripped(body, ("714-555-0107", "PHONE_NUMBER"), ("Jo Tran", "PERSON"),
                          ("jo@example.com", "EMAIL_ADDRESS"))
         assert gone == "714-555-0107\nJo Tran | jo@example.com\n"
+
+    def test_name_with_nothing_above_is_the_whole_message(self):
+        assert _stripped("Jordan Reyes\nEvent Coordinator\n", ("Jordan Reyes", "PERSON")) is None
+
+    def test_courtesy_line_above_a_timeline_is_not_a_sign_off(self):
+        #"Thank you!" opens this message; the sign-off only counts right above the name line
+        body = ("Hi Anna,\nThank you!\nHere's the timeline:\n5:00pm Cocktail Hour\n6:00pm Grand Entrance\n"
+                "7:00pm Toast by Uncle Tom\n")
+        assert _stripped(body, ("Anna", "PERSON"), ("Tom", "PERSON")) is None
+
+    def test_closing_sentence_that_opens_with_a_name(self):
+        #mostly lowercase words after the name read as a sentence, not a title
+        body = "Hi, can we book two lions for the 3rd?\nAnna will be the point of contact\n"
+        assert _stripped(body, ("Anna", "PERSON")) is None
+
+    def test_thank_you_with_a_name_above_message_text_stays(self):
+        #a sentence follows "Thanks Jordan!", so it's a mid-message thank-you, not a sign-off
+        body = "Hi team,\nThanks Jordan!\nThe deposit is due two weeks before the event.\n"
+        assert _stripped(body, ("Jordan", "PERSON")) is None

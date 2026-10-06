@@ -88,7 +88,7 @@ class TestCommonWords:
 class TestDateTime:
 
     @pytest.mark.parametrize("text", ["October 22", "Oct. 22nd", "22nd of October", "10/22/2027", "10/22",
-                                      "10-22-2027", "2027-10-22", "the 22nd"])
+                                      "10-22-2027", "2027-10-22", "the 22nd", "8.23.27", "09.26.26 6pm"])
     def test_calendar_dates_redact(self, text):
         assert _decide("DATE_TIME", text) == ("redact", "calendar_date")
 
