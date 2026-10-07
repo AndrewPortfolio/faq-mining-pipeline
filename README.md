@@ -78,3 +78,30 @@ email, not just spans, because a missed PII never becomes a span.
 3. `python src/apply_redactions.py` — writes `data/redacted/`
 
 Presidio is done: Stage 2 (embedding) reads `data/redacted/`.
+
+
+## Stage 2: Chunking + Embedding
+Reads the redacted shards (`data/redacted/`) and writes `data/embeddings/<task>/emails-NNNNN.jsonl`,
+one per input shard. Each row is one chunk: its text, its email's `id`/`thrid`/`date`/`direction`/
+`subject`, and its vector, kept in one row so they can't drift apart.
+
+- **Model:** Ollama `nomic-embed-text` (768-d). Its real context is 2048 tokens (the Modelfile's
+  `num_ctx 8192` is ignored), and Ollama silently cuts longer input by default, so every request
+  sends `truncate: false`: an overflow comes back as an error and that chunk is split in half instead.
+- **Task prefixes:** the model is trained with them, and the same text embeds differently under each,
+  so each task is its own vector set: `--task clustering` (default, for Stage 3) and
+  `--task search_document` (the RAG index). The responder adds `search_query:` to incoming messages.
+- **Chunks:** ~300 words, split at paragraphs, then sentences, then words, so most emails stay one
+  chunk. A chunk with fewer than 3 real words once its `<ENTITY>` tags are gone is skipped. Only the
+  body is embedded: most subjects are `Re:` threads or form templates.
+- **PII tripwire:** a phone number (line-wrapped ones too), email address, URL or `@handle` that
+  Stage 1 missed sends the whole email to quarantine, so it's never embedded.
+  `emails-NNNNN.quarantine.csv` lists where each hit is (never its text) so it can be fixed in Stage 1.
+- **Resumable per shard:** a shard whose output exists is skipped. `checkpoint.json` records the model
+  digest, task and chunk settings, and a run with different ones refuses to mix them in (`--force`
+  rebuilds). `--limit N` writes a smoke test to `<outdir>/smoke`.
+
+### Stage 2 workflow
+1. `ollama pull nomic-embed-text` (once), with Ollama running
+2. `python src/embed.py` — clustering vectors (~8 min on an M4)
+3. `python src/embed.py --task search_document` — RAG vectors (same chunks, same `chunk_id`s)
