@@ -14,14 +14,14 @@ import argparse
 import csv
 import glob
 import io
-import json
 import os
 import sys
 
 from shared.pii_recognizers import (ALLOWLIST_PATH, DENYLIST_PATH, ENTITIES, PLACELIST_PATH,
                                     VENUELIST_PATH, build_analyzer, load_allowlist)
 from shared.decisions import COMMON_DATETIME_PATH, COMMON_LOCATION_PATH, Rules
-from shared.pipeline import Checkpoint, Progress, Stats, count_rows, shard_paths
+from shared.pipeline import (Checkpoint, Progress, Stats, count_rows, read_shard, shard_paths,
+                             write_atomic)
 from shared.signatures import SIGNATURE_ENTITY, SIGNATURE_RULE, signature_zones
 
 
@@ -41,11 +41,6 @@ COLUMNS = ["email_id", "thrid", "field", "entity_type", "start", "end", "text", 
 
 
 # Reading
-
-def read_shard(path: str) -> list[dict]:
-    with open(path, encoding="utf-8") as fh:
-        return [json.loads(line) for line in fh if line.strip()]
-
 
 def review_spans(reviewdir: str) -> list[dict]:
     # every shard's current review file; the .orig copies don't match the pattern
@@ -136,13 +131,6 @@ def render_view(row: dict, spans: list[dict]) -> str:
             text = f"{text[:span['start']]}{marked}{text[span['end']:]}"
         lines.append(f"{field}: {text}")
     return "\n".join(lines) + "\n"
-
-
-def write_atomic(path: str, text: str) -> None:
-    tmp = path + ".part"
-    with open(tmp, "w", encoding="utf-8", newline="") as fh:
-        fh.write(text)
-    os.replace(tmp, path)
 
 
 def edited(base: str) -> bool:
