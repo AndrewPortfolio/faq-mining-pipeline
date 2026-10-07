@@ -42,7 +42,21 @@ def count_rows(indir: str, prefix: str = SHARD_PREFIX) -> int:
     return total
 
 
+def read_shard(path: str) -> list[dict]:
+    # one whole shard, for stages that write one output per input shard
+    with open(path, encoding="utf-8") as fh:
+        return [json.loads(line) for line in fh if line.strip()]
+
+
 # Write
+
+def write_atomic(path: str, text: str) -> None:
+    # temp file + rename, so a crash never leaves a half-written file behind
+    tmp = path + ".part"
+    with open(tmp, "w", encoding="utf-8", newline="") as fh:
+        fh.write(text)
+    os.replace(tmp, path)
+
 
 class ShardWriter:
 

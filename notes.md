@@ -18,11 +18,14 @@
         - Remove all vs remove at freq k (arbritrary number) --> Remove all locations: Venues, places, zip 
 
 # 9/29/26
-- [ ] Implement Signature Block Removal 
+- [x] Implement Signature Block Removal 
     - Reasoning: Lot's of quasi-identifier information found in these blocks 
-- [ ] Review the rest of sample.txt
+- [x] Review the rest of sample.txt
 
-# xx/xx/26
-- [ ] Run analyze_pii.py
-- [ ] Review csv files in /data/reviews
-- [ ] Run apply_redactions.py 
+# 9/30/26
+- [x] Run analyze_pii.py
+- [x] Review csv files in /data/reviews
+- [x] Run apply_redactions.py 
+
+# 10/6/26 
+- [x] Vector Embeddings 
