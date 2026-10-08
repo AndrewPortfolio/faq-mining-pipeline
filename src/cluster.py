@@ -3,10 +3,11 @@
 #   assignments.jsonl  each inbound chunk's cluster (-1 = noise, a one-off question) and membership strength
 #   clusters.csv       one row per cluster: sizes, top terms, its most typical chunks
 #   report.txt         every cluster, biggest first, with its typical messages and how they were answered
+#   clusters.html      ranked bars + a map of the clusters (sizes and top terms only); opens offline in a browser
 #   run.json           the settings and input behind these files
 # Only inbound chunks are clustered; your replies are looked up through the thread instead
 # Usage:
-#     .venv/bin/python src/cluster.py --sweep                  # compare HDBSCAN settings, writes nothing
+#     .venv/bin/python src/cluster.py --sweep                  # 1 UMAP run + compare HDBSCAN settings no writes
 #     .venv/bin/python src/cluster.py                          # cluster with the defaults below
 #     .venv/bin/python src/cluster.py --min-cluster-size 25    # fewer, broader clusters
 
@@ -41,6 +42,9 @@ DEFAULT_OUTDIR = "data/clusters"
 UMAP_NEIGHBORS = 15
 UMAP_COMPONENTS = 5
 UMAP_MIN_DIST = 0.0
+PLOT_MIN_DIST = 0.1  # the 2-D map gets its own UMAP run; a little spread keeps its dots readable
+
+PAGE_TEMPLATE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "templates", "clusters.html")
 
 MIN_CLUSTER_SIZE = 15  # smallest group of chunks that counts as an FAQ
 MIN_SAMPLES = 5        # lower means fewer chunks written off as noise
@@ -98,10 +102,11 @@ def dedupe(rows: list[dict]) -> tuple[list[int], np.ndarray]:
 
 # UMAP + HDBSCAN
 
-def reduce(vectors: np.ndarray, seed: int) -> np.ndarray:
+def reduce(vectors: np.ndarray, seed: int, n_components: int = UMAP_COMPONENTS,
+           min_dist: float = UMAP_MIN_DIST) -> np.ndarray:
     # imported here: umap compiles its numba code on import (~30 s the first time), and tests swap this out
     import umap
-    reducer = umap.UMAP(n_neighbors=UMAP_NEIGHBORS, n_components=UMAP_COMPONENTS, min_dist=UMAP_MIN_DIST,
+    reducer = umap.UMAP(n_neighbors=UMAP_NEIGHBORS, n_components=n_components, min_dist=min_dist,
                         metric="cosine", random_state=seed, n_jobs=1)
     return reducer.fit_transform(vectors)
 
@@ -251,6 +256,22 @@ def render_clusters(summaries: list[dict]) -> str:
     return buf.getvalue()
 
 
+def render_page(summaries: list[dict], xy: np.ndarray, labels_distinct: np.ndarray, header: list[str]) -> str:
+    # The page gets cluster sizes and top terms, never message text, so it can't leak a client's words.
+    # "</" is escaped so nothing in the data can close the script tag it sits in
+    data = {
+        "header": [line.lstrip("# ") for line in header],
+        "clusters": [{"id": s["cluster"], "n_chunks": s["n_chunks"], "n_emails": s["n_emails"],
+                      "n_threads": s["n_threads"], "terms": s["top_terms"]} for s in summaries],
+        # flat [x, y, cluster, x, y, cluster, ...], one dot per distinct text
+        "points": [value for (x, y), label in zip(xy.tolist(), labels_distinct.tolist())
+                   for value in (round(x, 3), round(y, 3), int(label))],
+    }
+    with open(PAGE_TEMPLATE, encoding="utf-8") as fh:
+        template = fh.read()
+    return template.replace("/*DATA*/", json.dumps(data, separators=(",", ":")).replace("</", "<\\/"))
+
+
 def render_sweep(results: list[dict]) -> str:
     lines = [f"{'method':<8}{'min_size':>9}{'min_samples':>13}{'clusters':>10}{'noise':>8}{'largest':>9}"]
     for r in results:
@@ -321,6 +342,10 @@ def run(args) -> int:
               f"# min_cluster_size {args.min_cluster_size}, min_samples {min_samples or 'same'}, "
               f"method {args.method}, seed {args.seed} | input {args.indir} ({model})"]
 
+    started = time.time()
+    xy = reduce(vectors[first], args.seed, n_components=2, min_dist=PLOT_MIN_DIST)
+    print(f"UMAP for the map: 2 dimensions in {time.time() - started:.0f}s")
+
     os.makedirs(args.outdir, exist_ok=True)
     write_atomic(os.path.join(args.outdir, "assignments.jsonl"), "".join(
         json.dumps({"chunk_id": row["chunk_id"], "id": row["id"], "thrid": row["thrid"],
@@ -328,6 +353,7 @@ def run(args) -> int:
         for row, label, p in zip(inbound, labels, strength)))
     write_atomic(os.path.join(args.outdir, "clusters.csv"), render_clusters(summaries))
     write_atomic(os.path.join(args.outdir, "report.txt"), render_report(summaries, header))
+    write_atomic(os.path.join(args.outdir, "clusters.html"), render_page(summaries, xy, labels_distinct, header))
     write_atomic(os.path.join(args.outdir, "run.json"), json.dumps(
         {**settings, "input": args.indir, "model": model, **stats, "noise_pct": round(noise_pct, 1)},
         indent=2) + "\n")
