@@ -1,0 +1,433 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>FAQ clusters</title>
+<!-- Written by src/cluster.py: the data below is sizes and top terms only, never message text -->
+<style>
+.viz-root {
+  color-scheme: light;
+  --page: #f9f9f7;
+  --surface-1: #fcfcfb;
+  --text-primary: #0b0b0b;
+  --text-secondary: #52514e;
+  --text-muted: #898781;
+  --grid: #e1e0d9;
+  --border: rgba(11, 11, 11, 0.10);
+  --hover: rgba(11, 11, 11, 0.04);
+  --series-1: #2a78d6;
+  --dot: #898781;
+  --dot-noise: #c3c2b7;
+}
+@media (prefers-color-scheme: dark) {
+  :root:where(:not([data-theme="light"])) .viz-root {
+    color-scheme: dark;
+    --page: #0d0d0d;
+    --surface-1: #1a1a19;
+    --text-primary: #ffffff;
+    --text-secondary: #c3c2b7;
+    --text-muted: #898781;
+    --grid: #2c2c2a;
+    --border: rgba(255, 255, 255, 0.10);
+    --hover: rgba(255, 255, 255, 0.06);
+    --series-1: #3987e5;
+    --dot: #898781;
+    --dot-noise: #52514e;
+  }
+}
+:root[data-theme="dark"] .viz-root {
+  color-scheme: dark;
+  --page: #0d0d0d;
+  --surface-1: #1a1a19;
+  --text-primary: #ffffff;
+  --text-secondary: #c3c2b7;
+  --text-muted: #898781;
+  --grid: #2c2c2a;
+  --border: rgba(255, 255, 255, 0.10);
+  --hover: rgba(255, 255, 255, 0.06);
+  --series-1: #3987e5;
+  --dot: #898781;
+  --dot-noise: #52514e;
+}
+
+* { box-sizing: border-box; }
+body {
+  margin: 0;
+  background: var(--page);
+  color: var(--text-primary);
+  font: 14px/1.45 system-ui, -apple-system, "Segoe UI", sans-serif;
+}
+main { max-width: 1080px; margin: 0 auto; padding: 32px 16px 48px; }
+h1 { font-size: 22px; font-weight: 600; margin: 0 0 6px; }
+h2 { font-size: 16px; font-weight: 600; margin: 0; }
+.lede { margin: 0; font-size: 15px; }
+.settings, .note { margin: 4px 0 0; color: var(--text-muted); font-size: 12px; }
+.hint { margin: 2px 0 16px; color: var(--text-secondary); font-size: 13px; }
+.card {
+  margin-top: 20px;
+  padding: 20px;
+  background: var(--surface-1);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+}
+
+/* Ranked bars: one series, so every bar is slot 1 and the value sits at the tip */
+.bars { display: grid; gap: 4px; }
+.bar-row {
+  display: grid;
+  grid-template-columns: minmax(0, 2fr) minmax(0, 3fr);
+  gap: 12px;
+  align-items: center;
+  width: 100%;
+  padding: 4px 6px;
+  border: 0;
+  border-radius: 6px;
+  background: none;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+.bar-row:hover, .bar-row:focus-visible { background: var(--hover); outline: none; }
+.bar-row:focus-visible { box-shadow: 0 0 0 2px var(--series-1); }
+.bar-label { color: var(--text-secondary); overflow-wrap: anywhere; }
+.bar-id { margin-right: 8px; color: var(--text-primary); font-weight: 600; font-variant-numeric: tabular-nums; }
+.bar-track { display: flex; align-items: center; gap: 8px; min-width: 0; }
+.bar { flex: none; height: 14px; border-radius: 0 4px 4px 0; background: var(--series-1); }
+.bar-value { color: var(--text-secondary); font-size: 12px; font-variant-numeric: tabular-nums; white-space: nowrap; }
+.has-selection .bar-row:not(.selected) .bar { opacity: 0.35; }
+.empty { color: var(--text-secondary); }
+
+/* Map */
+.status { min-height: 1.45em; margin: 0 0 8px; color: var(--text-secondary); font-size: 13px; }
+.map-wrap { position: relative; }
+canvas { display: block; width: 100%; cursor: crosshair; touch-action: none; }
+.legend { display: flex; flex-wrap: wrap; gap: 16px; margin-top: 10px; color: var(--text-secondary); font-size: 12px; }
+.key { display: inline-block; width: 8px; height: 8px; margin-right: 6px; border-radius: 50%; vertical-align: middle; }
+.tip {
+  position: absolute;
+  z-index: 1;
+  display: none;
+  max-width: 280px;
+  padding: 8px 10px;
+  background: var(--surface-1);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.12);
+  font-size: 12px;
+  pointer-events: none;
+}
+.tip strong { display: block; color: var(--text-primary); font-size: 13px; }
+.tip span { display: block; color: var(--text-secondary); }
+
+/* Table view: every number on the page, reachable without hover or colour */
+details { margin-top: 20px; }
+summary { cursor: pointer; font-weight: 600; }
+.table-scroll { overflow-x: auto; margin-top: 12px; }
+table { width: 100%; border-collapse: collapse; font-size: 12px; }
+th, td { padding: 6px 8px; border-bottom: 1px solid var(--grid); text-align: left; vertical-align: top; }
+th { color: var(--text-secondary); font-weight: 600; }
+.num { text-align: right; font-variant-numeric: tabular-nums; }
+tr.selected td { background: var(--hover); }
+td button {
+  padding: 0;
+  border: 0;
+  background: none;
+  color: var(--text-primary);
+  font: inherit;
+  font-weight: 600;
+  text-decoration: underline;
+  text-underline-offset: 2px;
+  cursor: pointer;
+}
+</style>
+</head>
+<body class="viz-root">
+<main>
+  <header>
+    <h1>FAQ clusters</h1>
+    <p class="lede" id="lede"></p>
+    <p class="settings" id="settings"></p>
+  </header>
+
+  <section class="card" aria-labelledby="bars-title">
+    <h2 id="bars-title">Most common question clusters</h2>
+    <p class="hint">The 20 biggest clusters by chunk count, each named by its top terms. Click one to find it on the map.</p>
+    <div class="bars" id="bars"></div>
+  </section>
+
+  <section class="card" aria-labelledby="map-title" id="map-card">
+    <h2 id="map-title">Cluster map</h2>
+    <p class="hint">Each dot is one distinct message chunk. Hover a dot to see its cluster; click to highlight it; Esc clears.</p>
+    <p class="status" id="status" aria-live="polite"></p>
+    <div class="map-wrap">
+      <canvas id="map" role="img" aria-label="Scatter map of message chunks, grouped by cluster. The table view below lists every cluster."></canvas>
+      <div class="tip" id="tip" role="tooltip"></div>
+    </div>
+    <div class="legend">
+      <span><span class="key" style="background: var(--dot)"></span>In a cluster</span>
+      <span><span class="key" style="background: var(--dot-noise)"></span>Noise (one-off message)</span>
+      <span><span class="key" style="background: var(--series-1)"></span>Highlighted cluster</span>
+    </div>
+    <p class="note">The map is its own 2-D UMAP projection of the 5-D space the clusters were found in, so treat distances between clusters as rough. Numbers mark the 10 biggest clusters.</p>
+  </section>
+
+  <details class="card">
+    <summary id="table-title">Table view</summary>
+    <div class="table-scroll">
+      <table>
+        <thead>
+          <tr><th>Cluster</th><th class="num">Chunks</th><th class="num">Emails</th><th class="num">Threads</th><th>Top terms</th></tr>
+        </thead>
+        <tbody id="rows"></tbody>
+      </table>
+    </div>
+  </details>
+</main>
+
+<script id="data" type="application/json">/*DATA*/</script>
+<script>
+(() => {
+  const data = JSON.parse(document.getElementById("data").textContent);
+  const clusters = data.clusters;  // biggest first, so a cluster's id is its index
+  const flat = data.points;        // x, y, cluster, x, y, cluster, ...
+  const count = flat.length / 3;
+  const TOP_BARS = 20;
+  const LABELLED = 10;
+  const HIT_RADIUS = 14;           // px: the pointer only has to be closest, not dead-centre
+  const CELL = 16;
+
+  let selected = -1;               // highlighted cluster, -1 for none
+  let hovered = null;              // index of the dot under the pointer
+  const byId = (id) => document.getElementById(id);
+  const make = (tag, cls) => { const node = document.createElement(tag); if (cls) node.className = cls; return node; };
+  const terms = (c, n) => c.terms.slice(0, n).join(" · ") || "(no terms)";
+
+  byId("lede").textContent = data.header[0] || "";
+  byId("settings").textContent = data.header[1] || "";
+  byId("table-title").textContent = `Table view · all ${clusters.length.toLocaleString()} clusters`;
+
+  // Ranked bars
+  const bars = byId("bars");
+  const top = clusters.slice(0, TOP_BARS);
+  if (!top.length) {
+    const empty = make("p", "empty");
+    empty.textContent = "No clusters: every chunk was noise. Try a smaller --min-cluster-size.";
+    bars.append(empty);
+  }
+  const most = top.length ? top[0].n_chunks : 1;
+  for (const c of top) {
+    const row = make("button", "bar-row");
+    row.type = "button";
+    row.dataset.id = c.id;
+    row.setAttribute("aria-label", `Cluster ${c.id}: ${c.n_chunks} chunks. Top terms: ${c.terms.slice(0, 3).join(", ")}`);
+    const label = make("span", "bar-label");
+    const id = make("span", "bar-id");
+    id.textContent = `#${c.id}`;
+    label.append(id, document.createTextNode(terms(c, 3)));
+    const track = make("span", "bar-track");
+    const bar = make("span", "bar");
+    bar.style.width = `calc((100% - 64px) * ${c.n_chunks / most})`;
+    const value = make("span", "bar-value");
+    value.textContent = c.n_chunks.toLocaleString();
+    track.append(bar, value);
+    row.append(label, track);
+    row.addEventListener("click", () => { select(selected === c.id ? -1 : c.id); byId("map-card").scrollIntoView({ behavior: "smooth", block: "nearest" }); });
+    bars.append(row);
+  }
+
+  // Table view
+  const rows = byId("rows");
+  for (const c of clusters) {
+    const tr = make("tr");
+    tr.dataset.id = c.id;
+    const first = make("td");
+    const show = make("button");
+    show.type = "button";
+    show.textContent = `#${c.id}`;
+    show.setAttribute("aria-label", `Highlight cluster ${c.id} on the map`);
+    show.addEventListener("click", () => { select(c.id); byId("map-card").scrollIntoView({ behavior: "smooth", block: "start" }); });
+    first.append(show);
+    tr.append(first);
+    for (const value of [c.n_chunks, c.n_emails, c.n_threads]) {
+      const td = make("td", "num");
+      td.textContent = value.toLocaleString();
+      tr.append(td);
+    }
+    const words = make("td");
+    words.textContent = c.terms.join(", ");
+    tr.append(words);
+    rows.append(tr);
+  }
+
+  // Map
+  const canvas = byId("map");
+  const ctx = canvas.getContext("2d");
+  const tip = byId("tip");
+  const xs = new Float64Array(count), ys = new Float64Array(count), label = new Int32Array(count);
+  for (let i = 0; i < count; i++) {
+    xs[i] = flat[3 * i]; ys[i] = flat[3 * i + 1]; label[i] = flat[3 * i + 2];
+  }
+  // A handful of stray dots would otherwise set the zoom and squeeze everything else into the middle,
+  // so the frame covers the middle 99% and the rare outliers are pinned to its edge
+  const quantile = (values, q) => {
+    const sorted = Float64Array.from(values).sort();
+    return sorted[Math.round(q * (sorted.length - 1))];
+  };
+  const minX = count ? quantile(xs, 0.005) : 0, maxX = count ? quantile(xs, 0.995) : 1;
+  const minY = count ? quantile(ys, 0.005) : 0, maxY = count ? quantile(ys, 0.995) : 1;
+  const clamp = (v, lo, hi) => Math.min(hi, Math.max(lo, v));
+  const px = new Float64Array(count), py = new Float64Array(count);
+  let width = 0, height = 0;
+  let grid = new Map();
+  let centres = [];
+
+  function layout() {
+    width = canvas.parentElement.clientWidth;
+    height = Math.round(Math.max(320, Math.min(width * 0.7, 640)));
+    const ratio = window.devicePixelRatio || 1;
+    canvas.width = Math.round(width * ratio);
+    canvas.height = Math.round(height * ratio);
+    canvas.style.height = `${height}px`;
+    ctx.setTransform(ratio, 0, 0, ratio, 0, 0);
+
+    const pad = 20;
+    const spanX = (maxX - minX) || 1, spanY = (maxY - minY) || 1;
+    const scale = Math.min((width - 2 * pad) / spanX, (height - 2 * pad) / spanY);
+    const offX = (width - scale * spanX) / 2, offY = (height - scale * spanY) / 2;
+    grid = new Map();
+    const sums = new Map();
+    for (let i = 0; i < count; i++) {
+      px[i] = offX + (clamp(xs[i], minX, maxX) - minX) * scale;
+      py[i] = height - (offY + (clamp(ys[i], minY, maxY) - minY) * scale);
+      const key = Math.floor(px[i] / CELL) * 100000 + Math.floor(py[i] / CELL);
+      if (!grid.has(key)) grid.set(key, []);
+      grid.get(key).push(i);
+      if (label[i] >= 0 && label[i] < LABELLED) {
+        const s = sums.get(label[i]) || [0, 0, 0];
+        s[0] += px[i]; s[1] += py[i]; s[2] += 1;
+        sums.set(label[i], s);
+      }
+    }
+    centres = [...sums].map(([id, [x, y, n]]) => ({ id, x: x / n, y: y / n }));
+    draw();
+  }
+
+  function token(name) { return getComputedStyle(document.body).getPropertyValue(name).trim(); }
+
+  function dots(test, radius) {
+    ctx.beginPath();
+    for (let i = 0; i < count; i++) {
+      if (!test(label[i])) continue;
+      ctx.moveTo(px[i] + radius, py[i]);
+      ctx.arc(px[i], py[i], radius, 0, 2 * Math.PI);
+    }
+    ctx.fill();
+  }
+
+  function draw() {
+    const focus = hovered !== null && label[hovered] >= 0 ? label[hovered] : selected;
+    ctx.clearRect(0, 0, width, height);
+    // noise stays small and faint so the clusters read as the dense, solid regions
+    ctx.globalAlpha = focus >= 0 ? 0.35 : 0.7;
+    ctx.fillStyle = token("--dot-noise");
+    dots((l) => l < 0, 1);
+    ctx.globalAlpha = focus >= 0 ? 0.3 : 0.9;
+    ctx.fillStyle = token("--dot");
+    dots((l) => l >= 0 && l !== focus, 1.7);
+    if (focus >= 0) {
+      ctx.globalAlpha = 1;
+      ctx.fillStyle = token("--series-1");
+      dots((l) => l === focus, 2.6);
+    }
+    ctx.globalAlpha = 1;
+    ctx.font = "600 12px system-ui, -apple-system, 'Segoe UI', sans-serif";
+    ctx.textAlign = "center";
+    ctx.textBaseline = "middle";
+    ctx.lineJoin = "round";
+    ctx.lineWidth = 3;
+    ctx.strokeStyle = token("--surface-1");
+    ctx.fillStyle = token("--text-primary");
+    for (const c of centres) {
+      ctx.strokeText(`#${c.id}`, c.x, c.y);
+      ctx.fillText(`#${c.id}`, c.x, c.y);
+    }
+  }
+
+  function nearest(x, y) {
+    let best = null, bestDistance = HIT_RADIUS * HIT_RADIUS;
+    const cx = Math.floor(x / CELL), cy = Math.floor(y / CELL);
+    for (let dx = -1; dx <= 1; dx++) {
+      for (let dy = -1; dy <= 1; dy++) {
+        for (const i of grid.get((cx + dx) * 100000 + cy + dy) || []) {
+          const d = (px[i] - x) ** 2 + (py[i] - y) ** 2;
+          if (d < bestDistance) { bestDistance = d; best = i; }
+        }
+      }
+    }
+    return best;
+  }
+
+  function showTip(i, x, y) {
+    tip.replaceChildren();
+    const strong = make("strong");
+    const lines = [];
+    if (label[i] < 0) {
+      strong.textContent = "Noise";
+      lines.push("A one-off message that fits no cluster");
+    } else {
+      const c = clusters[label[i]];
+      strong.textContent = `${c.n_chunks.toLocaleString()} chunks · ${c.n_emails.toLocaleString()} emails`;
+      lines.push(`Cluster #${c.id}`, terms(c, 5));
+    }
+    tip.append(strong, ...lines.map((text) => { const span = make("span"); span.textContent = text; return span; }));
+    tip.style.display = "block";
+    const left = x + 14 + tip.offsetWidth > width ? x - 14 - tip.offsetWidth : x + 14;
+    tip.style.left = `${Math.max(0, left)}px`;
+    tip.style.top = `${Math.max(0, y - tip.offsetHeight - 10)}px`;
+  }
+
+  let frame = 0;
+  canvas.addEventListener("pointermove", (event) => {
+    const box = canvas.getBoundingClientRect();
+    const x = event.clientX - box.left, y = event.clientY - box.top;
+    cancelAnimationFrame(frame);
+    frame = requestAnimationFrame(() => {
+      const i = nearest(x, y);
+      const changed = (i === null ? null : label[i]) !== (hovered === null ? null : label[hovered]);
+      hovered = i;
+      if (i === null) tip.style.display = "none"; else showTip(i, x, y);
+      if (changed) draw();
+    });
+  });
+  canvas.addEventListener("pointerleave", () => { hovered = null; tip.style.display = "none"; draw(); });
+  canvas.addEventListener("click", () => {
+    const id = hovered !== null && label[hovered] >= 0 ? label[hovered] : -1;
+    select(id === selected ? -1 : id);
+  });
+  document.addEventListener("keydown", (event) => { if (event.key === "Escape") select(-1); });
+
+  function select(id) {
+    selected = id;
+    bars.classList.toggle("has-selection", id >= 0);
+    for (const row of bars.children) row.classList.toggle("selected", Number(row.dataset.id) === id);
+    for (const tr of rows.children) tr.classList.toggle("selected", Number(tr.dataset.id) === id);
+    const status = byId("status");
+    if (id >= 0) {
+      const c = clusters[id];
+      status.textContent = `Highlighted: cluster #${c.id}, ${c.n_chunks.toLocaleString()} chunks (${terms(c, 3)}). Esc clears.`;
+    } else {
+      status.textContent = "";
+    }
+    draw();
+  }
+
+  let resizing = 0;
+  window.addEventListener("resize", () => { cancelAnimationFrame(resizing); resizing = requestAnimationFrame(layout); });
+  window.matchMedia("(prefers-color-scheme: dark)").addEventListener("change", draw);
+  layout();
+})();
+</script>
+</body>
+</html>

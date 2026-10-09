@@ -105,3 +105,34 @@ one per input shard. Each row is one chunk: its text, its email's `id`/`thrid`/`
 1. `ollama pull nomic-embed-text` (once), with Ollama running
 2. `python src/embed.py` — clustering vectors (~8 min on an M4)
 3. `python src/embed.py --task search_document` — RAG vectors (same chunks, same `chunk_id`s)
+
+
+## Stage 3: UMAP + HDBSCAN Clusters
+Reads the clustering vectors (`data/embeddings/clustering/`) and groups the inbound (client) chunks into
+question clusters, the FAQ candidates. Only inbound chunks are clustered; your replies are looked up through the
+thread instead. Writes to `data/clusters/` (gitignored; the empty top-level `clusters/` folder isn't, so it can go).
+
+- **UMAP → 5 dimensions first:** HDBSCAN's density estimates break down in 768 dimensions, so UMAP squeezes the
+  vectors into 5 that keep each chunk's neighbours (cosine, 15 neighbours, `min_dist` 0, fixed seed).
+- **HDBSCAN:** (scikit-learn's) finds the dense groups. Chunks that fit no group are noise (`-1`), which are one-off
+  questions and are never forced into a cluster. Defaults: `--min-cluster-size 15 --min-samples 5 --method eom`. **Chose HDBSCAN over other algorithms like K-Means because this data is unstructured and I don't know/have a predefined number (k) of clusters (FAQs)** this is what I am trying to find so hdbscan works perfectly for my use case. 
+- **Identical texts are clustered once** and their label is copied to every copy, so sizes still count them.
+- **Refuses mixed input:** every row must be the same model's `clustering:` vectors.
+- **Outputs:**
+  - `assignments.jsonl`: each inbound chunk's cluster and membership strength.
+  - `clusters.csv`: one row per cluster, biggest first: sizes, top terms (c-TF-IDF), most typical chunks.
+  - `report.txt`: every cluster with its top terms, the 5 chunks closest to its centre, and up to 2 outbound
+    replies from the same threads.
+  - `clusters.html`: opens offline in a browser. A bar chart of the 20 biggest clusters and a map of every chunk
+    (its own 2-D UMAP run), where hovering or clicking highlights a cluster, plus a table of all clusters. It holds
+    cluster sizes and top terms only, never message text.
+  - `run.json`: the settings and input used.
+- **Repeatable:** the same settings give byte-identical output.
+
+Installed for this stage: `umap-learn` 0.5.12 and `scikit-learn` 1.9.1 (they bring numba, llvmlite, scipy,
+pynndescent; numpy is unchanged).
+
+### Stage 3 workflow
+1. `python src/cluster.py --sweep` — one UMAP run, 16 HDBSCAN settings compared, nothing written (~30 s)
+2. `python src/cluster.py` — defaults gave 206 clusters with 35.5% noise (~25 s, including the map's UMAP run); **TODO:** add flags to arbitrarly choose a chunk in cluster for future testing to determine prod model
+3. `data/clusters/clusters.html` shows the overview of the clusters and `data/clusters/report.txt` contains what each cluster says
