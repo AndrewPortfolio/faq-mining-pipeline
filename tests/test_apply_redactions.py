@@ -113,6 +113,15 @@ class TestRedacting:
         _, outdir = _run(tmp_path, indir, reviewdir)
         assert "<LOCATION>" in _out(outdir)[0]["body"]
 
+    def test_offsets_point_into_the_text_without_invisible_characters(self, tmp_path):
+        #analyze_pii strips them before Presidio reads the text, so its offsets only fit the stripped body
+        body = f"write to t{chr(0xFEFF)}hao@exa{chr(0x200B)}mple.com"
+        span = _span(entity="EMAIL_ADDRESS", start="9", end="25", text="thao@example.com")
+        indir, reviewdir = _setup(tmp_path, [_email(body=body)], [span])
+        code, outdir = _run(tmp_path, indir, reviewdir)
+        assert code == 0
+        assert _out(outdir)[0]["body"] == "write to <EMAIL_ADDRESS>"
+
 
 # review-file checks
 

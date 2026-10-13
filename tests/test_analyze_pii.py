@@ -117,6 +117,14 @@ class TestOutputs:
         review = (outdir / "emails-00000.spans.csv").read_text(encoding="utf-8")
         assert review == (outdir / "emails-00000.spans.orig.csv").read_text(encoding="utf-8")
 
+    def test_invisible_characters_are_stripped_before_analysis(self, tmp_path, fake):
+        #a zero-width space inside a name hides it from every recognizer; offsets then fit the stripped text
+        indir = _shards(tmp_path, [_row(1, body=f"Hi Th{chr(0x200B)}ao, are you free?")])
+        _, outdir = _run(tmp_path, indir)
+        span = _spans(outdir / "emails-00000.spans.csv")[0]
+        assert (span["text"], span["start"], span["end"]) == ("Thao", "3", "7")
+        assert fake.texts[-1] == BODY
+
     def test_view_includes_emails_with_no_spans(self, tmp_path, fake):
         #a span file alone can't show an email the model missed entirely
         indir = _shards(tmp_path, [_row(1), _row(2, body="No names here at all")])

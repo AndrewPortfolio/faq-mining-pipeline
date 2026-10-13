@@ -4,13 +4,18 @@
 #Fixtures are synthetic --> no real PII, nothing in git
 
 
+import itertools
+
+import pytest
 from presidio_analyzer.nlp_engine import NlpArtifacts
 from spacy.tokens import Doc
 from spacy.vocab import Vocab
 
+from embed import pii_hits
 from shared.pii_recognizers import (AMBIGUOUS_ALONE, AMBIGUOUS_IN_ENTITY, AMBIGUOUS_PAIR,
                                     AMBIGUOUS_RECOGNIZER, AMBIGUOUS_WORD, CARRIER_SCORE, DOTTED_DATE_SCORE,
-                                    EIN_SCORE, ENTITIES, NAME_SCORE, ORDER_SCORE, PLACE_SCORE, POLICY_SCORE,
+                                    EIN_SCORE, ENTITIES, LOOSE_SCORE, NAME_SCORE, ORDER_SCORE, PLACE_SCORE,
+                                    POLICY_SCORE,
                                     VENUE_NAME_SCORE,
                                     VENUE_SCORE, ZIP_SCORE, custom_recognizers, load_allowlist,
                                     load_denylist, load_places, load_venues, name_recognizers,
@@ -140,9 +145,11 @@ class TestCustomRecognizers:
         recognizers = custom_recognizers(names, venues, places)
         entities = {e for r in recognizers for e in r.supported_entities}
         assert entities == {"PERSON", "LOCATION", "STREET_ADDRESS", "SOCIAL_HANDLE",
-                            "US_EIN", "INSURANCE_POLICY", "ORDER_ID", "DATE_TIME"}
+                            "US_EIN", "INSURANCE_POLICY", "ORDER_ID", "DATE_TIME",
+                            "PHONE_NUMBER", "URL", "EMAIL_ADDRESS"}
         assert {"denylist_venues", "denylist_places", "denylist_places_capitalized",
-                "us_zip", "venue_name", "order_id", "dotted_date"} <= {r.name for r in recognizers}
+                "us_zip", "venue_name", "order_id", "dotted_date",
+                "loose_phone", "loose_url", "loose_email"} <= {r.name for r in recognizers}
 
 
 class TestEin:
@@ -218,6 +225,93 @@ class TestDottedDate:
     def test_ignores_decimals_prices_and_addresses(self):
         recognizer = _named(pattern_recognizers(), "dotted_date")
         assert _hits(recognizer, "1.5 hours for $7.50 at 192.168.1.10, v1.2.3") == []
+
+
+# loose shapes (the Stage 2 tripwire's)
+
+class TestLoosePhone:
+
+    def test_wrapped_and_spaced_numbers(self):
+        #Presidio's phone matcher won't cross a line break, and most quarantined phones were wrapped or glued
+        recognizer = _named(pattern_recognizers(), "loose_phone")
+        assert _hits(recognizer, "call me at (714)\n555-0123 tonight") == [("(714)\n555-0123", LOOSE_SCORE)]
+        assert _hits(recognizer, "or 1 (714) 555 0123") == [("1 (714) 555 0123", LOOSE_SCORE)]
+
+    def test_glued_letters_go_with_the_number(self):
+        #a surname or a form label glued on is invisible to every \b-based recognizer
+        recognizer = _named(pattern_recognizers(), "loose_phone")
+        assert _hits(recognizer, "Thanks!Ann Lee714-555-0123") == [("Lee714-555-0123", LOOSE_SCORE)]
+        assert _hits(recognizer, "Phone: 714-555-0123Total: $350") == [("714-555-0123Total", LOOSE_SCORE)]
+        assert _hits(recognizer, "(Mom)C714.555.0123.") == [("C714.555.0123", LOOSE_SCORE)]
+
+    def test_ignores_ids_zips_dates_and_prices(self):
+        recognizer = _named(pattern_recognizers(), "loose_phone")
+        assert _hits(recognizer, "order #112-3456789-1234567, ref 1234567890, zip 92683-1234, "
+                                 "10:30-11:30 on 2024-10-05 for $1,500") == []
+
+
+class TestLooseUrl:
+
+    def test_scheme_is_part_of_the_span(self):
+        #Presidio's span could start after "http://", which was then left in front of <URL>
+        recognizer = _named(pattern_recognizers(), "loose_url")
+        assert _hits(recognizer, "photos <http://example.com/album>") == [("http://example.com/album", LOOSE_SCORE)]
+
+    def test_no_tld_and_malformed_links(self):
+        recognizer = _named(pattern_recognizers(), "loose_url")
+        assert _hits(recognizer, "visit WWW.EXAMPLESTUDIO, 10% off") == [("WWW.EXAMPLESTUDIO", LOOSE_SCORE)]
+        assert _hits(recognizer, "go to http:///lion-dance to book") == [("http:///lion-dance", LOOSE_SCORE)]
+
+    def test_trailing_punctuation_stays_out(self):
+        recognizer = _named(pattern_recognizers(), "loose_url")
+        assert _hits(recognizer, "(see https://example.com/a).") == [("https://example.com/a", LOOSE_SCORE)]
+
+    def test_bare_scheme_and_plain_words_are_ignored(self):
+        recognizer = _named(pattern_recognizers(), "loose_url")
+        assert _hits(recognizer, "type http:// first; www stands for world wide web") == []
+
+
+class TestLooseEmail:
+
+    def test_address_with_a_made_up_tld(self):
+        #Presidio's email recognizer drops an address whose TLD isn't real, like a cut-off "example.c"
+        recognizer = _named(pattern_recognizers(), "loose_email")
+        assert _hits(recognizer, "Email is thao.nguyen@example.c") == [("thao.nguyen@example.c", LOOSE_SCORE)]
+
+    def test_ignores_outlook_image_ids(self):
+        recognizer = _named(pattern_recognizers(), "loose_email")
+        assert _hits(recognizer, "[cid:image001.png@01D5A2B3.C4D5E6F0]") == []
+
+
+def _after_stage_1(text):
+    #the text with every span Stage 1's own patterns flag turned into a tag, overlaps merged like the anonymizer does
+    covered = [False] * len(text)
+    for recognizer in pattern_recognizers():
+        for r in recognizer.analyze(text, recognizer.supported_entities, nlp_artifacts=None):
+            covered[r.start:r.end] = [True] * (r.end - r.start)
+    return "".join("<PII>" if hidden else "".join(text[i] for i in group)
+                   for hidden, group in itertools.groupby(range(len(text)), key=covered.__getitem__))
+
+
+@pytest.mark.parametrize("text", [
+    "call me at (714)\n555-1234 tonight",
+    "my cell is 714-555-1234",
+    "or +1 714.555.1234",
+    "write to thao@example.com",
+    "photos at https://example.com/album",
+    "see www.example.com",
+    "follow us @liondance_team",
+    "Thanks!Ann Lee714-555-0123",
+    "Phone: 714-555-0123Total: $350",
+    "[cid:9a123456-7890-4ab1-8c2d-0123456789ab]",
+    "photos <http://example.com/album>",
+    "visit WWW.EXAMPLESTUDIO, 10% off",
+    "go to http:///lion-dance to book",
+    "Email is thao.nguyen@example.c",
+])
+def test_stage_1_leaves_nothing_for_the_tripwire(text):
+    #whatever embed.py would quarantine, Stage 1 already redacts, even without trf or Presidio's built-ins
+    assert pii_hits({"subject": "", "body": _after_stage_1(text)}) == []
 
 
 # ambiguous-word rescoring
