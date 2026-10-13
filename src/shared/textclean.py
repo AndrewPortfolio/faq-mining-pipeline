@@ -153,3 +153,15 @@ def strip_quoted(text: str) -> str:
     text = re.sub(r"[ \t]+", " ", text)
     text = re.sub(r"\n{3,}", "\n\n", text)
     return text.strip()
+
+
+# Invisible characters
+
+# Zero-width and direction marks (U+FEFF, U+200B-U+200F, soft hyphen, ...). Inside a word they split it, so neither
+# Presidio nor the Stage 2 tripwire sees the name or address it spells. Code points, deleted by str.translate
+_INVISIBLE = dict.fromkeys([0x00AD, 0x180E, *range(0x200B, 0x2010), *range(0x202A, 0x202F),
+                            *range(0x2060, 0x2065), 0xFEFF])
+
+
+def strip_invisible(text: str) -> str:
+    return text.translate(_INVISIBLE)

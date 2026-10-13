@@ -23,6 +23,7 @@ from shared.decisions import COMMON_DATETIME_PATH, COMMON_LOCATION_PATH, Rules
 from shared.pipeline import (Checkpoint, Progress, Stats, count_rows, read_shard, shard_paths,
                              write_atomic)
 from shared.signatures import SIGNATURE_ENTITY, SIGNATURE_RULE, signature_zones
+from shared.textclean import strip_invisible
 
 
 # Configuration
@@ -49,6 +50,17 @@ def review_spans(reviewdir: str) -> list[dict]:
         with open(path, encoding="utf-8", newline="") as fh:
             spans.extend(csv.DictReader(fh))
     return spans
+
+
+def read_rows(path: str) -> list[dict]:
+    # Every script that lines review offsets up with shard text reads it through here, so the offsets agree.
+    # Invisible characters go first: inside a word they hide it from every recognizer
+    rows = read_shard(path)
+    for row in rows:
+        for field in FIELDS:
+            if row.get(field):
+                row[field] = strip_invisible(row[field])
+    return rows
 
 
 # Detection
@@ -198,7 +210,7 @@ def run(args) -> int:
                     stats["shards_done"] += 1
                     continue
 
-            rows = read_shard(path)
+            rows = read_rows(path)
             if args.limit:
                 rows = rows[:max(0, args.limit - done)]
                 if not rows:

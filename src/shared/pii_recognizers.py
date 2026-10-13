@@ -48,6 +48,7 @@ POLICY_SCORE = 0.6      # the "Policy No:" label is already part of the match
 CARRIER_SCORE = 0.8     # a confirmed carrier prefix, found bare in subject lines
 ORDER_SCORE = 0.6       # the "Order #" label is already part of the match, as with policies
 DOTTED_DATE_SCORE = 0.6 # same as Presidio's own dotted pattern; DATE_TIME isn't score-gated anyway
+LOOSE_SCORE = 0.3       # under Presidio's own phone/URL/email scores, so a span both find stays credited to theirs
 
 # number + up to 4 name words + a street type, with an optional unit --> "1234 Oak St Apt 5"
 _STREET_RE = (r"\b\d{1,6}\s+(?:[A-Za-z][\w.'-]*\s+){0,4}"
@@ -79,6 +80,19 @@ _ORDER_RE = (r"(?<=\b(?:order|invoice|receipt|confirmation|tracking|transaction|
 # past the 12th slipped through. (?!\d) rather than \b, so form text glued on ("Date:4.5.27Time:") still matches
 _DOTTED_DATE_RE = (r"(?<!\d)(?<!\d\.)(?:0?[1-9]|1[0-2])\.(?:0?[1-9]|[12]\d|3[01])\.(?:\d{4}|\d{2})"
                    r"(?!\d)(?!\.\d)")
+
+# The Stage 2 tripwire's shapes (embed.py's PII_PATTERNS), so Stage 1 redacts whatever the tripwire would quarantine.
+# Presidio's phone matcher rejects a number touching a letter or wrapped onto the next line, and its URL and email
+# recognizers need a real TLD
+_PHONE_SHAPE = r"(?<!\d)(?:\+?1[\s.-]?)?\(?\d{3}\)?[\s.-]?\d{3}[\s.-]\d{4}(?!\d)"
+# Letters glued on either side go with the number: here they're a surname or a form label ("Lee714-...",
+# "...1234Total:"), and no \b-based recognizer can see a word glued to digits
+_LOOSE_PHONE_RE = rf"(?:(?<![A-Za-z\d])[A-Za-z]+)?{_PHONE_SHAPE}[A-Za-z]*"
+# The scheme is part of the span ("http://" was left in front of <URL>); trailing punctuation isn't
+_URL_END = r"[^\s<>.,;:!?)\]'\"]"
+_LOOSE_URL_RE = rf"\bhttps?://[^\s<>]*{_URL_END}|\bwww\.[^\s<>]*{_URL_END}"
+# an Outlook inline-image id (image001.png@01D5A2B3.C4D5E6F0) has an address's shape but no person
+_LOOSE_EMAIL_RE = r"(?<![\w.+-])[\w.+-]+@(?![0-9A-Fa-f]{8}\.[0-9A-Fa-f]{8}\b)[\w-]+(?:\.[\w-]+)+"
 
 # California's zip range is the only bare 9xxxx number this inbox writes: 12 of 12 sampled were zips
 # ("Costa Mesa 92626", "Ca 92832"). The guards keep prices ($95,000), decimals and #refs out
@@ -240,6 +254,13 @@ def pattern_recognizers() -> list[PatternRecognizer]:
         VenueNameRecognizer(supported_entity="LOCATION", name="venue_name",
                             patterns=[Pattern("venue_name", _VENUE_NAME_RE, VENUE_NAME_SCORE)],
                             global_regex_flags=CASE_SENSITIVE),
+        # shape only, no validation: what Presidio's phone, URL and email recognizers reject
+        PatternRecognizer(supported_entity="PHONE_NUMBER", name="loose_phone",
+                          patterns=[Pattern("loose_phone", _LOOSE_PHONE_RE, LOOSE_SCORE)]),
+        PatternRecognizer(supported_entity="URL", name="loose_url",
+                          patterns=[Pattern("loose_url", _LOOSE_URL_RE, LOOSE_SCORE)]),
+        PatternRecognizer(supported_entity="EMAIL_ADDRESS", name="loose_email",
+                          patterns=[Pattern("loose_email", _LOOSE_EMAIL_RE, LOOSE_SCORE)]),
     ]
 
 

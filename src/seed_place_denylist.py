@@ -10,14 +10,13 @@
 from __future__ import annotations
 
 import argparse
-import json
 import os
 import re
 import sys
 from collections import Counter, defaultdict
 from typing import Iterable, Iterator
 
-from analyze_pii import DEFAULT_INDIR, DEFAULT_OUTDIR, FIELDS, review_spans, write_atomic
+from analyze_pii import DEFAULT_INDIR, DEFAULT_OUTDIR, FIELDS, read_rows, review_spans, write_atomic
 from seed_name_denylist import DEFAULT_DICT, english_in_use, load_english
 from shared.decisions import COMMON_LOCATION_PATH, normalize_term
 from shared.pii_recognizers import PLACELIST_PATH, load_entries
@@ -51,8 +50,7 @@ def analyzed_rows(indir: str, reviewdir: str) -> Iterator[dict]:
     for path in shard_paths(indir):
         base = os.path.splitext(os.path.basename(path))[0]
         if os.path.exists(os.path.join(reviewdir, f"{base}.spans.csv")):
-            with open(path, encoding="utf-8") as fh:
-                yield from (json.loads(line) for line in fh if line.strip())
+            yield from read_rows(path)  # the same text the review offsets point into
 
 
 def is_place_term(term: str) -> bool:

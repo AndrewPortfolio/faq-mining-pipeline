@@ -26,7 +26,7 @@ from presidio_anonymizer import AnonymizerEngine
 from presidio_anonymizer.entities import OperatorConfig
 
 # the review-file contract lives with the script that writes it
-from analyze_pii import FIELDS, read_shard, write_atomic
+from analyze_pii import FIELDS, read_rows, write_atomic
 from shared.pipeline import Checkpoint, Stats, shard_paths
 from shared.signatures import SIGNATURE_ENTITY
 
@@ -263,7 +263,7 @@ def run(args) -> int:
             continue
 
         spans = read_spans(review)
-        rows = read_shard(path)
+        rows = read_rows(path)
         errors = check_decisions(spans, review)
         if os.path.exists(view):
             analyzed = analyzed_ids(view)
