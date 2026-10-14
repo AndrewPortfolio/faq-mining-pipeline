@@ -200,6 +200,16 @@ def first_reply(row: dict, threads: dict) -> dict | None:
     return next((reply for when, reply in threads.get(row.get("thrid"), ()) if when > asked), None)
 
 
+def replies_for(reps: list[dict], threads: dict) -> list[dict]:
+    # up to REPLIES distinct first replies to a cluster's representatives; Stage 4 reuses it
+    replies = []
+    for rep in reps:
+        reply = first_reply(rep, threads)
+        if reply and reply["text"] not in {r["text"] for r in replies}:
+            replies.append(reply)
+    return replies[:REPLIES]
+
+
 def describe(inbound: list[dict], vectors: np.ndarray, first: list[int], labels: np.ndarray,
              labels_distinct: np.ndarray, threads: dict) -> list[dict]:
     # one summary per cluster, biggest first
@@ -211,11 +221,6 @@ def describe(inbound: list[dict], vectors: np.ndarray, first: list[int], labels:
     for k, rows in enumerate(members):
         distinct = first[labels_distinct == k]  # one row per distinct text, so no copy shows twice
         reps = [inbound[i] for i in distinct[representatives(vectors[distinct])]]
-        replies = []
-        for rep in reps:
-            reply = first_reply(rep, threads)
-            if reply and reply["text"] not in {r["text"] for r in replies}:
-                replies.append(reply)
         summaries.append({
             "cluster": k,
             "n_chunks": len(rows),
@@ -223,7 +228,7 @@ def describe(inbound: list[dict], vectors: np.ndarray, first: list[int], labels:
             "n_threads": len({inbound[i]["thrid"] for i in rows}),
             "top_terms": terms[k],
             "representatives": reps,
-            "replies": replies[:REPLIES],
+            "replies": replies_for(reps, threads),
         })
     return summaries
 
