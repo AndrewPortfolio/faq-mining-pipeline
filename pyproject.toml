@@ -1,12 +1,10 @@
 [build-system]
 # tools needed to build packages
-
 requires = ["setuptools>=64"]
 build-backend = "setuptools.build_meta"
 
 [project]
-# core packate metadata
-
+# core package metadata
 name = "faq-mining"
 version = "0.1.0"
 description = "Converts MBOX data into jsonl shards that are cleaned of PII/noise, embedded using Ollama, then clusterd using UMAP+HDBSCAN, and then filtered for FAQs"
@@ -16,7 +14,34 @@ authors = [
     { name = "Andrew Pham", email="andrewhpham4@gmail.com"}
 ]
 
+#Production Dependencies
+dependencies = [
+    "presidio_analyzer>=2.2.364,<3",
+    "presidio_anonymizer>=2.2.364,<3",
+    "umap-learn>=0.5.12,<0.6",
+    "scikit-learn>=1.9.1,<2",
+    "spacy>=3.8.16,<4",
+    "numpy>=2.4.6,<3",
+]
+
+[project.optional-dependencies]
+# extra dependencies 
+dev = [
+    "pytest>=9.1.1",
+    "ruff==0.16.10",
+]
+
 [tool.setuptools.packages.find]
-# Extra dependencies
+# Instructs setuptools to look for my code in src/ and faq_mining 
 where = ["src"]
 include = ["faq_mining*"]
+
+[tool.ruff] 
+#config for ruff
+line-length = 120
+
+[tool.ruff.lint]
+select = ["E", "W", "F", "I", "UP", "B", "ANN"]
+
+[tool.ruff.lint.per-file-ignores]
+"tests/**" = ["ANN"]
