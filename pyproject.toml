@@ -1,0 +1,22 @@
+[build-system]
+# tools needed to build packages
+
+requires = ["setuptools>=64"]
+build-backend = "setuptools.build_meta"
+
+[project]
+# core packate metadata
+
+name = "faq-mining"
+version = "0.1.0"
+description = "Converts MBOX data into jsonl shards that are cleaned of PII/noise, embedded using Ollama, then clusterd using UMAP+HDBSCAN, and then filtered for FAQs"
+readme = "README.md"
+requires-python = ">=3.12"
+authors = [ 
+    { name = "Andrew Pham", email="andrewhpham4@gmail.com"}
+]
+
+[tool.setuptools.packages.find]
+# Extra dependencies
+where = ["src"]
+include = ["faq_mining*"]
