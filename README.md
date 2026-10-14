@@ -32,6 +32,13 @@ Runs Presidio (spaCy `en_core_web_trf`) over each email's subject and body and w
   venue names, EINs, policy numbers, order/invoice/tracking IDs, and month-first dotted dates.
   Names that are also English words ("An", "To", "My") are scored from how spaCy reads them in
   the sentence, so "Hi An," redacts and "An apple" doesn't.
+- **Loose phone/URL/email shapes** (`loose_phone`, `loose_url`, `loose_email`): Presidio's own recognizers reject a
+  number glued to a letter or wrapped onto the next line, and an address with no real TLD. These match the Stage 2
+  tripwire's shapes instead, so whatever the tripwire would quarantine gets redacted here first. They score under
+  Presidio's, so a span both find stays credited to Presidio.
+- **Invisible characters are stripped first** (`textclean.strip_invisible`): a zero-width character inside a word
+  hides it from every recognizer. Every script that lines review offsets up with shard text reads through
+  `analyze_pii.read_rows`, so the offsets agree.
 - **Pre-filled decisions** (`src/shared/decisions.py`): each row's `redact`/`keep` and the `rule`
   that fired are written to the CSV so a surprising `keep` can be traced.
   - Always redacted: names, URLs, every location (region words in
@@ -73,7 +80,8 @@ to catch PII no recognizer flagged and FAQ content wrongly marked `redact`. Uses
 email, not just spans, because a missed PII never becomes a span.
 
 ### Stage 1 workflow
-1. `python src/analyze_pii.py` — writes the review files (~1.1 h for all shards)
+1. `PYTHONHASHSEED=0 python src/analyze_pii.py` — writes the review files (~1.1 h for all shards). The fixed seed
+   keeps tied spans in the same order between runs, so two runs' review files can be diffed.
 2. Review `data/review/*.spans.csv` and `sample.txt`
 3. `python src/apply_redactions.py` — writes `data/redacted/`
 
@@ -117,7 +125,7 @@ one per input shard. Each row is one chunk: its text, its email's `id`/`thrid`/`
 ## Stage 3: UMAP + HDBSCAN Clusters
 Reads the clustering vectors (`data/embeddings/clustering/`) and groups the inbound (client) chunks into
 question clusters, the FAQ candidates. Only inbound chunks are clustered; your replies are looked up through the
-thread instead. Writes to `data/clusters/` (gitignored; the empty top-level `clusters/` folder isn't, so it can go).
+thread instead. Writes to `data/clusters/` (gitignored).
 
 - **UMAP → 5 dimensions first:** HDBSCAN's density estimates break down in 768 dimensions, so UMAP squeezes the
   vectors into 5 that keep each chunk's neighbours (cosine, 15 neighbours, `min_dist` 0, fixed seed).
@@ -141,7 +149,7 @@ pynndescent; numpy is unchanged).
 
 ### Stage 3 workflow
 1. `python src/cluster.py --sweep` — one UMAP run, 16 HDBSCAN settings compared, nothing written (~30 s)
-2. `python src/cluster.py` — defaults gave 206 clusters with 35.5% noise (~25 s, including the map's UMAP run); **TODO:** add flags to arbitrarly choose a chunk in cluster for future testing to determine prod model
+2. `python src/cluster.py` — defaults gave 204 clusters with 32.1% noise (~25 s, including the map's UMAP run); **TODO:** add flags to arbitrarly choose a chunk in cluster for future testing to determine prod model
 3. `data/clusters/clusters.html` shows the overview of the clusters and `data/clusters/report.txt` contains what each cluster says
 
 
@@ -166,6 +174,7 @@ review, or noise to skip. Writes to `data/faqs/`. Nothing is deleted: a skipped 
   - `run.json`: the Stage 3 run it triaged and the thresholds.
 
 ### Stage 4 workflow
-1. `python src/triage.py` after every `cluster.py` run (~4 s). The first run gave 156 FAQ candidates, 34 to review,
-   16 skipped.
+1. `python src/triage.py` after every `cluster.py` run (~4 s). The current run gives 153 FAQ candidates, 32 to review,
+   19 skipped. Known gap: a 255-chunk "sorry / thanks / yes" cluster passes as a candidate, because 23% of its chunks
+   ask a question.
 2. Read `candidates.txt` to name FAQs, and `read_by_hand.txt` for the Vietnamese ones.
