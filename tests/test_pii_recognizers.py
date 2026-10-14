@@ -7,6 +7,7 @@
 import itertools
 
 import pytest
+from presidio_analyzer import RecognizerRegistry
 from presidio_analyzer.nlp_engine import NlpArtifacts
 from spacy.tokens import Doc
 from spacy.vocab import Vocab
@@ -14,7 +15,8 @@ from spacy.vocab import Vocab
 from embed import pii_hits
 from shared.pii_recognizers import (AMBIGUOUS_ALONE, AMBIGUOUS_IN_ENTITY, AMBIGUOUS_PAIR,
                                     AMBIGUOUS_RECOGNIZER, AMBIGUOUS_WORD, CARRIER_SCORE, DOTTED_DATE_SCORE,
-                                    EIN_SCORE, ENTITIES, LOOSE_SCORE, NAME_SCORE, ORDER_SCORE, PLACE_SCORE,
+                                    EIN_SCORE, ENTITIES, LOOSE_SCORE, NAME_SCORE, ORDER_SCORE, OrderedRegistry,
+                                    PLACE_SCORE,
                                     POLICY_SCORE,
                                     VENUE_NAME_SCORE,
                                     VENUE_SCORE, ZIP_SCORE, custom_recognizers, load_allowlist,
@@ -428,3 +430,18 @@ class TestVenueNames:
         #"Bella Terra" has no venue word, so only the hand list catches it
         recognizer = _named(pattern_recognizers(), "venue_name")
         assert _hits(recognizer, "the school plaza near Bella Terra") == []
+
+
+# recognizer order
+
+def test_recognizers_run_in_registration_order(monkeypatch):
+    #Presidio's own order is memory addresses; reversed here so the test can't pass on a lucky layout
+    #Presidio's built-ins register first, so trf wins a span it ties with a deny-list on
+    registry = OrderedRegistry()
+    registry.load_predefined_recognizers(languages=["en"])
+    for recognizer in name_recognizers(["Nguyen"], ["Do"]) + pattern_recognizers():
+        registry.add_recognizer(recognizer)
+    monkeypatch.setattr(RecognizerRegistry, "get_recognizers", lambda self, *args, **kwargs: self.recognizers[::-1])
+    names = [r.name for r in registry.get_recognizers(language="en", entities=ENTITIES)]
+    assert names == [r.name for r in registry.recognizers]
+    assert names.index("SpacyRecognizer") < names.index("denylist_names")

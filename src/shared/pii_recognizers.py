@@ -296,13 +296,22 @@ def custom_recognizers(denylist_path: str = DENYLIST_PATH, venuelist_path: str =
             + pattern_recognizers())
 
 
+class OrderedRegistry(RecognizerRegistry):
+    # Presidio returns a set, so recognizers run in memory-address order (new each process, PYTHONHASHSEED or not),
+    # and a span two of them tie on goes to whichever ran first --> registration order runs Presidio's own first,
+    # so trf keeps its seed_place_denylist votes and review files repeat run to run
+
+    def get_recognizers(self, *args, **kwargs):
+        return sorted(super().get_recognizers(*args, **kwargs), key=self.recognizers.index)
+
+
 def build_analyzer(denylist_path: str = DENYLIST_PATH, venuelist_path: str = VENUELIST_PATH,
                    placelist_path: str = PLACELIST_PATH, model: str = DEFAULT_MODEL) -> AnalyzerEngine:
     nlp_engine = NlpEngineProvider(nlp_configuration={
         "nlp_engine_name": "spacy",
         "models": [{"lang_code": "en", "model_name": model}],
     }).create_engine()
-    registry = RecognizerRegistry()
+    registry = OrderedRegistry()
     registry.load_predefined_recognizers(languages=["en"], nlp_engine=nlp_engine)
     for recognizer in custom_recognizers(denylist_path, venuelist_path, placelist_path):
         registry.add_recognizer(recognizer)
