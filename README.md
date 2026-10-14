@@ -97,8 +97,15 @@ one per input shard. Each row is one chunk: its text, its email's `id`/`thrid`/`
 - **PII tripwire:** a phone number (line-wrapped ones too), email address, URL or `@handle` that
   Stage 1 missed sends the whole email to quarantine, so it's never embedded.
   `emails-NNNNN.quarantine.csv` lists where each hit is (never its text) so it can be fixed in Stage 1.
+- **ATLD's own unsent mail is skipped:** Stage 0 calls anything without Gmail's `Sent` label inbound, so drafts
+  (canned replies included) and old synced notes passed for client messages. An "inbound" email from whoever sent
+  the Sent mail is skipped (101 emails).
+- **Quoted mail Stage 0 missed is cut:** HTML→text sometimes leaves a quote header mid-line
+  (`…thanks! On <DATE_TIME> at 07:23 PM, <PERSON> <<EMAIL_ADDRESS>> wrote: Hello…`), where Stage 0's
+  line-anchored patterns can't see it. Everything from the header on is dropped (229 emails), often ATLD's own
+  reply quoted back. The tripwire still reads the whole email first.
 - **Resumable per shard:** a shard whose output exists is skipped. `checkpoint.json` records the model
-  digest, task and chunk settings, and a run with different ones refuses to mix them in (`--force`
+  digest, task, chunk settings and cleaning version, and a run with different ones refuses to mix them in (`--force`
   rebuilds). `--limit N` writes a smoke test to `<outdir>/smoke`.
 
 ### Stage 2 workflow
@@ -136,3 +143,29 @@ pynndescent; numpy is unchanged).
 1. `python src/cluster.py --sweep` — one UMAP run, 16 HDBSCAN settings compared, nothing written (~30 s)
 2. `python src/cluster.py` — defaults gave 206 clusters with 35.5% noise (~25 s, including the map's UMAP run); **TODO:** add flags to arbitrarly choose a chunk in cluster for future testing to determine prod model
 3. `data/clusters/clusters.html` shows the overview of the clusters and `data/clusters/report.txt` contains what each cluster says
+
+
+## Stage 4: Noise Triage
+Reads Stage 3's output (`data/clusters/`) and the chunk texts, and sorts every cluster into an FAQ candidate, one to
+review, or noise to skip. Writes to `data/faqs/`. Nothing is deleted: a skipped cluster is still listed with its reason.
+
+- **Rules read a cluster's text, never its number:** every Stage 3 run renumbers the clusters biggest-first.
+- **Skipped** (each threshold sits in a wide gap measured on the first run):
+  - `non_english`: half its chunks are Vietnamese. nomic-embed-text is mostly English, so it groups them by language.
+  - `template`: half its chunks hold the website form or the filled-in confirmation template (`FORM_MARKERS`).
+  - `footer`: 30% of its chunks hold a confidentiality-notice phrase.
+- **Review**, never skipped: clusters whose top terms are HTML (`markup`, which can hide a real topic), and clusters
+  where ≤10% of chunks ask a question (`few_questions`, mostly thanks and confirmations). Question share has no clean
+  cutoff, and some inquiries are written as statements.
+- **Refuses stale input:** if `data/clusters/` wasn't built from the current embeddings, it stops and asks for a rerun
+  of `cluster.py`.
+- **Outputs:**
+  - `triage.csv`: each cluster's decision, reason, and the shares behind it.
+  - `candidates.txt`: FAQ candidates, then the review groups, in `report.txt`'s format; skipped clusters one line each.
+  - `read_by_hand.txt`: every Vietnamese chunk wherever it landed, by thread, with the reply it got.
+  - `run.json`: the Stage 3 run it triaged and the thresholds.
+
+### Stage 4 workflow
+1. `python src/triage.py` after every `cluster.py` run (~4 s). The first run gave 156 FAQ candidates, 34 to review,
+   16 skipped.
+2. Read `candidates.txt` to name FAQs, and `read_by_hand.txt` for the Vietnamese ones.

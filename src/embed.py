@@ -2,6 +2,7 @@
 # Reads data/redacted/ and writes data/embeddings/<task>/emails-NNNNN.jsonl, one per input shard
 # Each row is one chunk with its text, its email's metadata and its vector, so they can't drift apart
 # An email the PII tripwire fires on is never embedded; emails-NNNNN.quarantine.csv says where the hit is
+# Neither is ATLD's own unsent mail (drafts, synced notes), and quoted mail Stage 0 missed is cut off
 # Usage (all Stage 2; --task only changes the prefix and the output folder):
 #     .venv/bin/python src/embed.py                          # -> data/embeddings/clustering/, Stage 3's input
 #     .venv/bin/python src/embed.py --task search_document   # -> data/embeddings/search_document/, the RAG index
@@ -24,7 +25,7 @@ import time
 import urllib.error
 import urllib.request
 
-from shared.pipeline import Checkpoint, Progress, Stats, read_shard, shard_paths, write_atomic
+from shared.pipeline import Checkpoint, Progress, Stats, iter_shard_rows, read_shard, shard_paths, write_atomic
 
 
 # Configuration
@@ -46,6 +47,7 @@ MIN_WORDS = 3          # real words a chunk needs once its <ENTITY> tags are gon
 BATCH_SIZE = 32        # throughput is flat from 8 to 64 (~27 inputs/s), and a small batch is cheap to redo
 REQUEST_TIMEOUT = 120  # the slowest measured batch took 2.5 s, a cold model load 1.1 s
 MAX_ATTEMPTS = 3       # per request, then the run stops; finished shards are kept
+CLEAN_VERSION = 1      # bump when what's skipped or cut changes, so old and new vectors can't mix
 
 QUARANTINE_COLUMNS = ["shard", "email_id", "field", "entity_type", "start", "end"]
 
@@ -108,6 +110,20 @@ def chunk_text(body: str) -> list[str]:
 def has_content(text: str) -> bool:
     # "<PERSON>" or "Thanks <PERSON>" would embed to a vector about nothing
     return len(_WORD_RE.findall(_TAG_RE.sub(" ", text))) >= MIN_WORDS
+
+
+# Quote headers Stage 0 missed: HTML->text left them mid-line ("...thanks! On <DATE_TIME> at 07:23:59 PM PST,
+# <PERSON> <<EMAIL_ADDRESS>> wrote: Hello...", "...<<EMAIL_ADDRESS>>Sent: ... PMSubject:"), where its line-anchored
+# patterns can't match. It leans on Stage 1's tags, so it lives here, not in textclean. Case-sensitive: real
+# headers capitalize On and From
+_FLAT_QUOTE_RE = re.compile(r"\bOn\b[^\n]{0,120}?(?:<EMAIL_ADDRESS>|\d{1,2}:\d{2})[^\n]{0,120}?\bwrote:"
+                            r"|From:[^\n]{0,150}?(?:Sent|Date):[^\n]{0,80}?(?:To|Subject):")
+
+
+def cut_quoted(body: str) -> str:
+    # everything after the header is older mail, often ATLD's own words quoted back
+    m = _FLAT_QUOTE_RE.search(body)
+    return body[:m.start()].rstrip() if m else body
 
 
 # PII tripwire
@@ -226,8 +242,8 @@ def embed_pieces(texts: list[str], embed, stats: Stats) -> list[list[tuple[str, 
 # Shards
 
 def embed_shard(rows: list[dict], shard: str, embed, batch_size: int, stats: Stats,
-                *, task: str, model: str) -> tuple[list[dict], list[dict]]:
-    # returns (output rows, quarantine rows)
+                *, task: str, model: str, own: set[str]) -> tuple[list[dict], list[dict]]:
+    # returns (output rows, quarantine rows); own holds ATLD's sender hashes
     pending, quarantine = [], []  # pending holds (row index, chunk text)
     for index, row in enumerate(rows):
         hits = pii_hits(row)
@@ -235,7 +251,11 @@ def embed_shard(rows: list[dict], shard: str, embed, batch_size: int, stats: Sta
             stats["quarantined"] += 1
             quarantine.extend({"shard": shard, "email_id": row.get("id") or "", **hit} for hit in hits)
             continue
-        chunks = [chunk for chunk in chunk_text(row.get("body") or "") if has_content(chunk)]
+        # Stage 0 calls anything without the Sent label inbound, so ATLD's drafts would pass for a client's words
+        if row.get("direction") == "inbound" and row.get("sender") in own:
+            stats["own_unsent"] += 1
+            continue
+        chunks = [chunk for chunk in chunk_text(cut_quoted(row.get("body") or "")) if has_content(chunk)]
         if not chunks:
             stats["no_content"] += 1
             continue
@@ -315,7 +335,7 @@ def run(args) -> int:
         print(f"error: {err}", file=sys.stderr)
         return 1
     config = {"model": args.model, "digest": digest, "task": args.task,
-              "target_words": TARGET_WORDS, "min_words": MIN_WORDS}
+              "target_words": TARGET_WORDS, "min_words": MIN_WORDS, "clean": CLEAN_VERSION}
 
     checkpoint = Checkpoint(os.path.join(outdir, "checkpoint.json"))
     rebuild = args.force or bool(args.limit)  # a smoke test always starts over
@@ -342,6 +362,8 @@ def run(args) -> int:
 
     embed = functools.partial(embed_batch, url=args.url, model=args.model, prefix=PREFIXES[args.task])
     model = f"{args.model}@{digest[:12]}"
+    # ATLD is whoever sent the Sent mail; the sender is a keyed hash, so it can't be written down here
+    own = {row.get("sender") for row in iter_shard_rows(args.indir) if row.get("direction") == "outbound"} - {None, ""}
     total = sum(_rows_in(path) for _, path, _ in todo)
     progress = Progress(total=min(total, args.limit) if args.limit else total, every=1,
                         unit="emails", scale=1.0)
@@ -354,7 +376,7 @@ def run(args) -> int:
                 if not rows:
                     break
             out, quarantine = embed_shard(rows, name, embed, args.batch_size, stats,
-                                          task=args.task, model=model)
+                                          task=args.task, model=model, own=own)
             # the quarantine list goes first: the shard's output is what marks it finished
             quarantine_path = os.path.join(outdir, f"{name}.quarantine.csv")
             if quarantine:

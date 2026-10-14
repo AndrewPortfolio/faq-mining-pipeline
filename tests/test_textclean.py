@@ -6,7 +6,7 @@
 
 import pytest
 
-from shared.textclean import html_to_text, strip_quoted, unwrap_platform_lead
+from shared.textclean import html_to_text, strip_invisible, strip_quoted, unwrap_platform_lead
 
 
 #html_to_text
@@ -252,3 +252,17 @@ class TestPipelineOrder:
     def test_composition_is_safe_on_ordinary_mail(self):
         body = "Hi, what is your pricing for a 20 minute performance?"
         assert strip_quoted(unwrap_platform_lead(body, "customer@gmail.com")) == body
+
+
+#strip_invisible
+
+class TestStripInvisible:
+
+    def test_zero_width_characters_inside_a_word_go(self):
+        #they split "thao@example.com" so that no recognizer reads it as an address
+        hidden = "\N{ZERO WIDTH NO-BREAK SPACE}\N{ZERO WIDTH SPACE}\N{SOFT HYPHEN}\N{LEFT-TO-RIGHT MARK}"
+        assert strip_invisible(f"t{hidden}hao@exa{hidden}mple.com") == "thao@example.com"
+
+    def test_visible_text_is_untouched(self):
+        text = "Giá bao nhiêu? 2–3 lions, 50% off — thanks!\n\nNext line\twith a tab"
+        assert strip_invisible(text) == text

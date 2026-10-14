@@ -16,7 +16,7 @@ import os
 import random
 import sys
 
-from analyze_pii import DEFAULT_INDIR, DEFAULT_OUTDIR, FIELDS, read_shard, review_spans, write_atomic
+from analyze_pii import DEFAULT_INDIR, DEFAULT_OUTDIR, FIELDS, read_rows, review_spans, write_atomic
 from shared.decisions import normalize_term
 from shared.pipeline import shard_paths
 from shared.signatures import SIGNATURE_ENTITY
@@ -37,7 +37,7 @@ def analyzed_emails(indir: str, reviewdir: str) -> list[dict]:
     for path in shard_paths(indir):
         base = os.path.splitext(os.path.basename(path))[0]
         if os.path.exists(os.path.join(reviewdir, f"{base}.spans.csv")):
-            emails.extend(read_shard(path))
+            emails.extend(read_rows(path))
     return emails
 
 

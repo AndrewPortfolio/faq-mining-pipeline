@@ -12,7 +12,7 @@ import urllib.error
 import pytest
 
 import embed
-from embed import (MAX_ATTEMPTS, PREFIXES, TARGET_WORDS, ContextOverflow, chunk_text, embed_pieces,
+from embed import (MAX_ATTEMPTS, PREFIXES, TARGET_WORDS, ContextOverflow, chunk_text, cut_quoted, embed_pieces,
                    has_content, main, pii_hits, post_json)
 from shared.pipeline import Stats
 
@@ -72,6 +72,29 @@ def test_blank_body_has_no_chunks():
 ])
 def test_has_content(text, expected):
     assert has_content(text) is expected
+
+
+# Quoted mail
+
+HEADER = "On <DATE_TIME> at 07:23:59 PM PST, <PERSON> <<EMAIL_ADDRESS>> wrote:"
+
+
+@pytest.mark.parametrize("body, kept", [
+    (f"Sounds good, see you then! {HEADER} Hello <PERSON>, Thank you so much for choosing us!",
+     "Sounds good, see you then!"),
+    ("Please see below.From: <PERSON> <<EMAIL_ADDRESS>>Sent: <DATE_TIME> at 04:56:58 PM PDTSubject: Re: Booking",
+     "Please see below."),
+])
+def test_flattened_quote_header_cuts_the_rest(body, kept):
+    assert cut_quoted(body) == kept
+
+
+@pytest.mark.parametrize("body", [
+    "On Saturday I wrote: our vows. Can the drums wait until after?",           # no time or address
+    "We were on the call at 3:00 and you wrote: no travel fee. Is that right?",  # lowercase on
+])
+def test_prose_that_looks_like_a_header_is_kept(body):
+    assert cut_quoted(body) == body
 
 
 # PII tripwire
@@ -282,6 +305,33 @@ def test_stats_count_what_was_skipped(tmp_path, monkeypatch):
     assert (stats["emails"], stats["chunks"], stats["quarantined"], stats["no_content"]) == (2, 4, 1, 1)
 
 
+def test_atld_unsent_mail_is_not_embedded(tmp_path, monkeypatch):
+    # Stage 0 calls a draft inbound, but it's from whoever sent the Sent mail
+    reply = {**_email(5, "Our lion dance is $300 for fifteen minutes."), "direction": "outbound",
+             "labels": ["Sent"], "sender": "atld"}
+    draft = {**_email(6, "Thank you so much for choosing us! This is the confirmation email."),
+             "labels": ["Drafts"], "sender": "atld"}
+    indir, outdir = _setup(tmp_path, [EMAILS[0], reply, draft])
+    _run(monkeypatch, indir, outdir)
+    assert {r["id"] for r in _rows(outdir / "emails-00000.jsonl")} == {EMAILS[0]["id"], reply["id"]}
+    assert json.loads((outdir / "checkpoint.json").read_text(encoding="utf-8"))["stats"]["own_unsent"] == 1
+
+
+def test_quoted_mail_is_cut_before_chunking(tmp_path, monkeypatch):
+    body = f"Can the drums come too? {HEADER} Hello <PERSON>, Thank you so much for choosing us!"
+    indir, outdir = _setup(tmp_path, [_email(1, body)])
+    _run(monkeypatch, indir, outdir)
+    assert [r["text"] for r in _rows(outdir / "emails-00000.jsonl")] == ["Can the drums come too?"]
+
+
+def test_the_tripwire_still_reads_the_quoted_part(tmp_path, monkeypatch):
+    # a miss below the header still sits in data/redacted, so it's still reported for Stage 1
+    indir, outdir = _setup(tmp_path, [_email(1, f"Can the drums come too? {HEADER} call 714-555-1234")])
+    _run(monkeypatch, indir, outdir)
+    assert (outdir / "emails-00000.quarantine.csv").exists()
+    assert _rows(outdir / "emails-00000.jsonl") == []
+
+
 def test_search_document_task_uses_its_own_prefix(tmp_path, monkeypatch):
     indir, outdir = _setup(tmp_path)
     code, ollama = _run(monkeypatch, indir, outdir, "--task", "search_document")
@@ -307,6 +357,17 @@ def test_a_different_model_needs_force(tmp_path, monkeypatch):
     assert repulled.inputs == []
     assert _run(monkeypatch, indir, outdir, "--force", ollama=repulled)[0] == 0
     assert repulled.inputs
+
+
+def test_vectors_from_before_the_cleaning_need_force(tmp_path, monkeypatch):
+    indir, outdir = _setup(tmp_path)
+    _run(monkeypatch, indir, outdir)
+    checkpoint = outdir / "checkpoint.json"
+    state = json.loads(checkpoint.read_text(encoding="utf-8"))
+    del state["config"]["clean"]  # what a run from before the cleaning recorded
+    checkpoint.write_text(json.dumps(state), encoding="utf-8")
+    assert _run(monkeypatch, indir, outdir)[0] == 1
+    assert _run(monkeypatch, indir, outdir, "--force")[0] == 0
 
 
 def test_failure_keeps_finished_shards_for_the_rerun(tmp_path, monkeypatch):
