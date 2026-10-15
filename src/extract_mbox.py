@@ -22,8 +22,9 @@ from email.parser import BytesParser
 from email.utils import parsedate_to_datetime
 
 from faq_mining import config
+from faq_mining.storage.shards import Checkpoint, ShardWriter
 from faq_mining.utils.reporting import Progress, Stats
-from shared.pipeline import Checkpoint, Deduper, ShardWriter
+from shared.pipeline import Deduper
 from shared.textclean import html_to_text, strip_quoted, unwrap_platform_lead
 
 # Configuration

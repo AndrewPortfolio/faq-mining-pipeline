@@ -11,7 +11,7 @@ import pytest
 
 import extract_mbox
 from extract_mbox import build_row, decode_part, iter_messages, main
-from shared.pipeline import Checkpoint, iter_shard_rows, shard_paths
+from faq_mining.storage.shards import Checkpoint, iter_shard_rows, shard_paths
 
 _ids = itertools.count(1)
 

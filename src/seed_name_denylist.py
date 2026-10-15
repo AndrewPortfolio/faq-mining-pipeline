@@ -18,7 +18,7 @@ from collections.abc import Iterable
 from email.utils import getaddresses
 
 from faq_mining import config
-from shared.pipeline import iter_shard_rows, shard_paths
+from faq_mining.storage.shards import iter_shard_rows, shard_paths
 
 # Configuration
 
