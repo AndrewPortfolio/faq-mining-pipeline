@@ -16,7 +16,8 @@ import os
 import random
 import sys
 
-from analyze_pii import DEFAULT_INDIR, DEFAULT_OUTDIR, FIELDS, read_rows, review_spans, write_atomic
+from analyze_pii import FIELDS, read_rows, review_spans, write_atomic
+from faq_mining import config
 from shared.decisions import normalize_term
 from shared.pipeline import shard_paths
 from shared.signatures import SIGNATURE_ENTITY
@@ -126,8 +127,8 @@ def render(email: dict, spans: list[dict], n: int, total: int, reason: str) -> s
 
 def parse_args(argv=None):
     ap = argparse.ArgumentParser(description="Stratified sample of analyzed emails for a confidence read")
-    ap.add_argument("--indir", default=DEFAULT_INDIR)
-    ap.add_argument("--reviewdir", default=DEFAULT_OUTDIR)
+    ap.add_argument("--indir", default=config.EXTRACTED_DIR)
+    ap.add_argument("--reviewdir", default=config.REVIEW_DIR)
     ap.add_argument("--out", default=None, help="default: <reviewdir>/sample.txt")
     ap.add_argument("--size", type=int, default=DEFAULT_SIZE)
     ap.add_argument("--top-person", type=int, default=DEFAULT_TOP_PERSON)

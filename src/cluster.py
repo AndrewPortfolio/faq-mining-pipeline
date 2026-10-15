@@ -29,12 +29,10 @@ from sklearn.cluster import HDBSCAN
 from sklearn.feature_extraction.text import CountVectorizer
 from sklearn.preprocessing import normalize
 
+from faq_mining import config
 from shared.pipeline import Stats, read_shard, shard_paths, write_atomic
 
 # Configuration
-
-DEFAULT_INDIR = "data/embeddings/clustering"
-DEFAULT_OUTDIR = "data/clusters"
 
 # HDBSCAN's density estimates break down in 768 dimensions, so UMAP squeezes the vectors into 5 that keep
 # each chunk's neighbours. min_dist 0 packs similar chunks tightly, which is what density clustering wants
@@ -340,8 +338,8 @@ def render_sweep(results: list[dict]) -> str:
 
 def parse_args(argv=None):
     ap = argparse.ArgumentParser(description="Stage 3: cluster inbound chunks into FAQ candidates")
-    ap.add_argument("--indir", default=DEFAULT_INDIR)
-    ap.add_argument("--outdir", default=DEFAULT_OUTDIR)
+    ap.add_argument("--indir", default=config.CLUSTERING_EMBEDDINGS_DIR)
+    ap.add_argument("--outdir", default=config.CLUSTERS_DIR)
     ap.add_argument("--min-cluster-size", type=int, default=MIN_CLUSTER_SIZE)
     ap.add_argument("--min-samples", type=int, default=MIN_SAMPLES, help="0 means the same as --min-cluster-size")
     ap.add_argument("--method", choices=("eom", "leaf"), default=METHOD)

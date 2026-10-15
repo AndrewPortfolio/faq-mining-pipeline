@@ -27,15 +27,11 @@ from presidio_anonymizer.entities import OperatorConfig
 
 # the review-file contract lives with the script that writes it
 from analyze_pii import FIELDS, read_rows, write_atomic
+from faq_mining import config
 from shared.pipeline import Checkpoint, Stats, shard_paths
 from shared.signatures import SIGNATURE_ENTITY
 
 # Configuration
-
-DEFAULT_INDIR = "data/extracted"
-DEFAULT_REVIEWDIR = "data/review"
-DEFAULT_OUTDIR = "data/redacted"
-DEFAULT_KEY_PATH = "data/pii/hash_key"
 
 DECISIONS = {"redact", "keep"}
 HASH_CHARS = 16  # 64 bits, more than enough to keep 29k senders apart
@@ -238,10 +234,10 @@ def redact_shard(
 
 def parse_args(argv=None):
     ap = argparse.ArgumentParser(description="Stage 1b: apply reviewed redactions")
-    ap.add_argument("--indir", default=DEFAULT_INDIR)
-    ap.add_argument("--reviewdir", default=DEFAULT_REVIEWDIR)
-    ap.add_argument("--outdir", default=DEFAULT_OUTDIR)
-    ap.add_argument("--hash-key", default=DEFAULT_KEY_PATH)
+    ap.add_argument("--indir", default=config.EXTRACTED_DIR)
+    ap.add_argument("--reviewdir", default=config.REVIEW_DIR)
+    ap.add_argument("--outdir", default=config.REDACTED_DIR)
+    ap.add_argument("--hash-key", default=config.HASH_KEY)
     ap.add_argument("--force", action="store_true", help="rewrite shards already redacted")
     return ap.parse_args(argv)
 

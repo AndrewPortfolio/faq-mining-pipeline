@@ -23,14 +23,11 @@ import re
 import sys
 
 from cluster import first_reply, load_chunks, render_report, replies_by_thread, replies_for
+from faq_mining import config
 from shared.pipeline import Stats, write_atomic
 from shared.signatures import FORM_MARKERS
 
 # Configuration
-
-DEFAULT_CLUSTERS = "data/clusters"
-DEFAULT_INDIR = "data/embeddings/clustering"
-DEFAULT_OUTDIR = "data/faqs"
 
 # Each skip threshold sits in a wide gap measured on the first full run (lowest flagged vs highest not flagged)
 VIETNAMESE_SHARE = 0.5  # 0.94 vs 0.21: nomic-embed-text is mostly English, so it groups these by language
@@ -234,9 +231,9 @@ def render_read_by_hand(inbound: list[dict], label: dict, threads: dict) -> str:
 
 def parse_args(argv=None):
     ap = argparse.ArgumentParser(description="Stage 4: sort clusters into FAQ candidates, review, and noise")
-    ap.add_argument("--clusters", default=DEFAULT_CLUSTERS, help="Stage 3's output")
-    ap.add_argument("--indir", default=DEFAULT_INDIR, help="the clustering vectors Stage 3 read")
-    ap.add_argument("--outdir", default=DEFAULT_OUTDIR)
+    ap.add_argument("--clusters", default=config.CLUSTERS_DIR, help="Stage 3's output")
+    ap.add_argument("--indir", default=config.CLUSTERING_EMBEDDINGS_DIR, help="the clustering vectors Stage 3 read")
+    ap.add_argument("--outdir", default=config.FAQS_DIR)
     return ap.parse_args(argv)
 
 

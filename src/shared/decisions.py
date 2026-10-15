@@ -6,12 +6,14 @@ from __future__ import annotations
 
 import re
 
+from faq_mining import config
 from shared.pii_recognizers import AMBIGUOUS_RECOGNIZER, load_entries
 
 # Configuration
 
-COMMON_DATETIME_PATH = "data/pii/common_words_datetime.txt"
-COMMON_LOCATION_PATH = "data/pii/common_words_location.txt"
+# Old names, kept for anything still importing them; the refactor's Cleanup deletes them
+COMMON_DATETIME_PATH = config.COMMON_DATETIME
+COMMON_LOCATION_PATH = config.COMMON_LOCATION
 
 # Score doesn't gate these: a missed name or link is permanent once embedded,
 # while a redacted false positive only costs a word
@@ -83,7 +85,7 @@ class Rules:
         }
 
     @classmethod
-    def load(cls, datetime_path: str = COMMON_DATETIME_PATH, location_path: str = COMMON_LOCATION_PATH) -> Rules:
+    def load(cls, datetime_path: str = config.COMMON_DATETIME, location_path: str = config.COMMON_LOCATION) -> Rules:
         return cls(load_entries(datetime_path), load_entries(location_path))
 
     def decide(

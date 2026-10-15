@@ -17,24 +17,18 @@ import io
 import os
 import sys
 
-from shared.decisions import COMMON_DATETIME_PATH, COMMON_LOCATION_PATH, Rules
-from shared.pii_recognizers import (
-    ALLOWLIST_PATH,
-    DENYLIST_PATH,
-    ENTITIES,
-    PLACELIST_PATH,
-    VENUELIST_PATH,
-    build_analyzer,
-    load_allowlist,
-)
+from faq_mining import config
+from shared.decisions import Rules
+from shared.pii_recognizers import ENTITIES, build_analyzer, load_allowlist
 from shared.pipeline import Checkpoint, Progress, Stats, count_rows, read_shard, shard_paths, write_atomic
 from shared.signatures import SIGNATURE_ENTITY, SIGNATURE_RULE, signature_zones
 from shared.textclean import strip_invisible
 
 # Configuration
 
-DEFAULT_INDIR = "data/extracted"
-DEFAULT_OUTDIR = "data/review"
+# Old names, kept for anything still importing them; the refactor's Cleanup deletes them
+DEFAULT_INDIR = config.EXTRACTED_DIR
+DEFAULT_OUTDIR = config.REVIEW_DIR
 
 # Free text only: the headers get hashed in apply_redactions, so running NER on them is wasted work
 FIELDS = ("subject", "body")
@@ -218,14 +212,14 @@ def edited(base: str) -> bool:
 
 def parse_args(argv=None):
     ap = argparse.ArgumentParser(description="Stage 1: flag PII spans for review")
-    ap.add_argument("--indir", default=DEFAULT_INDIR)
-    ap.add_argument("--outdir", default=DEFAULT_OUTDIR)
-    ap.add_argument("--denylist", default=DENYLIST_PATH)
-    ap.add_argument("--venues", default=VENUELIST_PATH)
-    ap.add_argument("--places", default=PLACELIST_PATH)
-    ap.add_argument("--allowlist", default=ALLOWLIST_PATH)
-    ap.add_argument("--common-datetime", default=COMMON_DATETIME_PATH)
-    ap.add_argument("--common-location", default=COMMON_LOCATION_PATH)
+    ap.add_argument("--indir", default=config.EXTRACTED_DIR)
+    ap.add_argument("--outdir", default=config.REVIEW_DIR)
+    ap.add_argument("--denylist", default=config.NAME_DENYLIST)
+    ap.add_argument("--venues", default=config.VENUE_DENYLIST)
+    ap.add_argument("--places", default=config.PLACE_DENYLIST)
+    ap.add_argument("--allowlist", default=config.ALLOWLIST)
+    ap.add_argument("--common-datetime", default=config.COMMON_DATETIME)
+    ap.add_argument("--common-location", default=config.COMMON_LOCATION)
     ap.add_argument("--limit", type=int, default=0, help="smoke test: analyze N emails into <outdir>/smoke")
     ap.add_argument(
         "--force", action="store_true", help="re-analyze shards already done (edited review files are still left alone)"
