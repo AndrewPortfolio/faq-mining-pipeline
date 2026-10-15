@@ -25,3 +25,8 @@ Done on a separate worktree named `faq-mining-pipeline-refactor`
     - **Fix**: OrderedRegistry class sorts the recognizers Presidio returns back in order they were registred --> Made it deterministic so that spaCy always wins
 
 ### Chunk 0B: 
+- Finished pyproject.toml and requirements.txt --> Added all my dependencies and exact versions I need for rebuilding this environment 
+- Added ruff for lint checks and formatting 
+- CI wrote .github/workflows/ci/yml --> ruff check . , ruff format --check . , and pytest -q 
+    - Created status badge from Actions tab on github 
+    - New ruleset for main that requires these to tests to pass before merging  
