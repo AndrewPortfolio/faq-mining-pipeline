@@ -16,10 +16,10 @@ import os
 import random
 import sys
 
-from analyze_pii import FIELDS, read_rows, review_spans, write_atomic
+from analyze_pii import FIELDS, read_rows, review_spans
 from faq_mining import config
+from faq_mining.storage.shards import shard_paths, write_atomic
 from shared.decisions import normalize_term
-from shared.pipeline import shard_paths
 from shared.signatures import SIGNATURE_ENTITY
 
 # Configuration

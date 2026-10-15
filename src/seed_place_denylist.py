@@ -16,12 +16,12 @@ import sys
 from collections import Counter, defaultdict
 from collections.abc import Iterable, Iterator
 
-from analyze_pii import FIELDS, read_rows, review_spans, write_atomic
+from analyze_pii import FIELDS, read_rows, review_spans
 from faq_mining import config
+from faq_mining.storage.shards import shard_paths, write_atomic
 from seed_name_denylist import english_in_use, load_english
 from shared.decisions import normalize_term
 from shared.pii_recognizers import load_entries
-from shared.pipeline import shard_paths
 
 # Configuration
 

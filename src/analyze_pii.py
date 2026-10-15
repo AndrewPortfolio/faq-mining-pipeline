@@ -18,10 +18,10 @@ import os
 import sys
 
 from faq_mining import config
+from faq_mining.storage.shards import Checkpoint, count_rows, read_shard, shard_paths, write_atomic
 from faq_mining.utils.reporting import Progress, Stats
 from shared.decisions import Rules
 from shared.pii_recognizers import ENTITIES, build_analyzer, load_allowlist
-from shared.pipeline import Checkpoint, count_rows, read_shard, shard_paths, write_atomic
 from shared.signatures import SIGNATURE_ENTITY, SIGNATURE_RULE, signature_zones
 from shared.textclean import strip_invisible
 
