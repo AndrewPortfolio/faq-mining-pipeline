@@ -25,7 +25,7 @@ from embed import (
     pii_hits,
     post_json,
 )
-from shared.pipeline import Stats
+from faq_mining.utils.reporting import Stats
 
 DIGEST = "0a109f422b47e3a3" + "0" * 48
 

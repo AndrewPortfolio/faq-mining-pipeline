@@ -30,7 +30,8 @@ from sklearn.feature_extraction.text import CountVectorizer
 from sklearn.preprocessing import normalize
 
 from faq_mining import config
-from shared.pipeline import Stats, read_shard, shard_paths, write_atomic
+from faq_mining.utils.reporting import Stats
+from shared.pipeline import read_shard, shard_paths, write_atomic
 
 # Configuration
 

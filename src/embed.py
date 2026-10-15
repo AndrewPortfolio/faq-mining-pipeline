@@ -26,7 +26,8 @@ import urllib.error
 import urllib.request
 
 from faq_mining import config
-from shared.pipeline import Checkpoint, Progress, Stats, iter_shard_rows, read_shard, shard_paths, write_atomic
+from faq_mining.utils.reporting import Progress, Stats
+from shared.pipeline import Checkpoint, iter_shard_rows, read_shard, shard_paths, write_atomic
 
 # Configuration
 

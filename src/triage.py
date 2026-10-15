@@ -24,7 +24,8 @@ import sys
 
 from cluster import first_reply, load_chunks, render_report, replies_by_thread, replies_for
 from faq_mining import config
-from shared.pipeline import Stats, write_atomic
+from faq_mining.utils.reporting import Stats
+from shared.pipeline import write_atomic
 from shared.signatures import FORM_MARKERS
 
 # Configuration
