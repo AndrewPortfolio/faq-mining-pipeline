@@ -1,6 +1,5 @@
-# Faq-mining-pipeline
+# Faq-mining-pipeline [![.github/workflows/ci.yml](https://github.com/AndrewPortfolio/faq-mining-pipeline/actions/workflows/ci.yml/badge.svg)](https://github.com/AndrewPortfolio/faq-mining-pipeline/actions/workflows/ci.yml)  
 Given email text data, this program will clean the data of footers, spam, trash, and marketing/automated emails, and strip PII. It will then be converted into vector embeddings using Ollama (nomic-embed-text), and use HDBSCAN to find FAQs. 
-[![.github/workflows/ci.yml](https://github.com/AndrewPortfolio/faq-mining-pipeline/actions/workflows/ci.yml/badge.svg)](https://github.com/AndrewPortfolio/faq-mining-pipeline/actions/workflows/ci.yml) 
 
 ## Stage 0: Data Extraction + Sharding 
 Reads the Gmail Takeout mbox and writes client conversations to `data/extracted/emails-NNNNN.jsonl`.
