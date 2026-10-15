@@ -16,10 +16,11 @@ import sys
 from collections import Counter, defaultdict
 from collections.abc import Iterable, Iterator
 
-from analyze_pii import DEFAULT_INDIR, DEFAULT_OUTDIR, FIELDS, read_rows, review_spans, write_atomic
-from seed_name_denylist import DEFAULT_DICT, english_in_use, load_english
-from shared.decisions import COMMON_LOCATION_PATH, normalize_term
-from shared.pii_recognizers import PLACELIST_PATH, load_entries
+from analyze_pii import FIELDS, read_rows, review_spans, write_atomic
+from faq_mining import config
+from seed_name_denylist import english_in_use, load_english
+from shared.decisions import normalize_term
+from shared.pii_recognizers import load_entries
 from shared.pipeline import shard_paths
 
 # Configuration
@@ -121,11 +122,11 @@ def render(places: list[str], capitalized: list[str], mentions: Counter, tagged:
 
 def parse_args(argv=None):
     ap = argparse.ArgumentParser(description="Stage 1 prep: seed the place deny-list")
-    ap.add_argument("--indir", default=DEFAULT_INDIR)
-    ap.add_argument("--reviewdir", default=DEFAULT_OUTDIR)
-    ap.add_argument("--out", default=PLACELIST_PATH)
-    ap.add_argument("--dict", default=DEFAULT_DICT, help="word list used to find everyday-English places")
-    ap.add_argument("--common-location", default=COMMON_LOCATION_PATH)
+    ap.add_argument("--indir", default=config.EXTRACTED_DIR)
+    ap.add_argument("--reviewdir", default=config.REVIEW_DIR)
+    ap.add_argument("--out", default=config.PLACE_DENYLIST)
+    ap.add_argument("--dict", default=config.ENGLISH_WORDS, help="word list used to find everyday-English places")
+    ap.add_argument("--common-location", default=config.COMMON_LOCATION)
     ap.add_argument("--force", action="store_true", help="overwrite an existing (possibly edited) list")
     return ap.parse_args(argv)
 

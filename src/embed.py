@@ -25,12 +25,11 @@ import time
 import urllib.error
 import urllib.request
 
+from faq_mining import config
 from shared.pipeline import Checkpoint, Progress, Stats, iter_shard_rows, read_shard, shard_paths, write_atomic
 
 # Configuration
 
-DEFAULT_INDIR = "data/redacted"
-DEFAULT_OUTROOT = "data/embeddings"
 DEFAULT_MODEL = "nomic-embed-text"
 DEFAULT_URL = "http://localhost:11434"
 
@@ -312,14 +311,14 @@ def _rows_in(path: str) -> int:
 
 def parse_args(argv=None):
     ap = argparse.ArgumentParser(description="Stage 2: chunk redacted emails and embed them with Ollama")
-    ap.add_argument("--indir", default=DEFAULT_INDIR)
+    ap.add_argument("--indir", default=config.REDACTED_DIR)
     ap.add_argument(
         "--task",
         choices=sorted(PREFIXES),
         default="clustering",
         help="nomic task prefix; each task is its own vector set",
     )
-    ap.add_argument("--outdir", help=f"default: {DEFAULT_OUTROOT}/<task>")
+    ap.add_argument("--outdir", help=f"default: {config.EMBEDDINGS_DIR}/<task>")
     ap.add_argument("--model", default=DEFAULT_MODEL)
     ap.add_argument("--url", default=DEFAULT_URL, help="Ollama server")
     ap.add_argument("--batch-size", type=int, default=BATCH_SIZE)
@@ -335,7 +334,7 @@ def run(args) -> int:
         return 1
 
     # A shard cut short by --limit would look finished to the next run, smoke tests go elsewhere
-    outdir = args.outdir or os.path.join(DEFAULT_OUTROOT, args.task)
+    outdir = args.outdir or os.path.join(config.EMBEDDINGS_DIR, args.task)
     if args.limit:
         outdir = os.path.join(outdir, "smoke")
         print(f"smoke test: {args.limit} emails -> {outdir}")
@@ -346,7 +345,7 @@ def run(args) -> int:
     except RuntimeError as err:
         print(f"error: {err}", file=sys.stderr)
         return 1
-    config = {
+    settings = {
         "model": args.model,
         "digest": digest,
         "task": args.task,
@@ -360,10 +359,10 @@ def run(args) -> int:
     if rebuild:
         checkpoint.clear()
     state = checkpoint.load() or {}
-    if state.get("config", config) != config:
+    if state.get("config", settings) != settings:
         # vectors from another model, task or chunking in one set would quietly skew Stage 3
         print(
-            f"error: {outdir} was built with {state['config']}, not {config}; "
+            f"error: {outdir} was built with {state['config']}, not {settings}; "
             f"rerun with --force to rebuild every shard",
             file=sys.stderr,
         )
@@ -407,7 +406,7 @@ def run(args) -> int:
             write_atomic(out_path, "".join(json.dumps(r, ensure_ascii=False) + "\n" for r in out))
             stats["shards"] += 1
             done += len(rows)
-            checkpoint.save(config=config, last_shard=name, stats=dict(stats))
+            checkpoint.save(config=settings, last_shard=name, stats=dict(stats))
             progress.tick(done, note=f"{name}: {len(out):,} chunks")
     except (RuntimeError, ContextOverflow) as err:
         print(f"\nerror: {err}\nfinished shards are saved; rerun to resume", file=sys.stderr)

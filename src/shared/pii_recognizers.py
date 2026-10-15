@@ -11,13 +11,16 @@ import sys
 from presidio_analyzer import AnalyzerEngine, Pattern, PatternRecognizer, RecognizerRegistry
 from presidio_analyzer.nlp_engine import NlpEngineProvider
 
+from faq_mining import config
+
 # Configuration
 
 DEFAULT_MODEL = "en_core_web_trf"
-DENYLIST_PATH = "data/pii/name_denylist.txt"
-ALLOWLIST_PATH = "data/pii/allowlist.txt"
-VENUELIST_PATH = "data/pii/venue_denylist.txt"
-PLACELIST_PATH = "data/pii/place_denylist.txt"
+# Old names, kept for anything still importing them; the refactor's Cleanup deletes them
+DENYLIST_PATH = config.NAME_DENYLIST
+ALLOWLIST_PATH = config.ALLOWLIST
+VENUELIST_PATH = config.VENUE_DENYLIST
+PLACELIST_PATH = config.PLACE_DENYLIST
 
 # US_DRIVER_LICENSE is left out (it fires on ordinary alphanumerics), and so is NRP:
 # "Vietnamese tea ceremony" is FAQ content, not PII
@@ -228,7 +231,7 @@ def load_list(path: str) -> dict[str, list[str]]:
     return sections
 
 
-def load_denylist(path: str = DENYLIST_PATH) -> tuple[list[str], list[str]]:
+def load_denylist(path: str = config.NAME_DENYLIST) -> tuple[list[str], list[str]]:
     sections = load_list(path)
     return sections.get("names", []), sections.get("ambiguous", [])
 
@@ -238,15 +241,15 @@ def load_entries(path: str) -> list[str]:
     return [entry for entries in load_list(path).values() for entry in entries]
 
 
-def load_allowlist(path: str = ALLOWLIST_PATH) -> list[str]:
+def load_allowlist(path: str = config.ALLOWLIST) -> list[str]:
     return load_entries(path)
 
 
-def load_venues(path: str = VENUELIST_PATH) -> list[str]:
+def load_venues(path: str = config.VENUE_DENYLIST) -> list[str]:
     return load_entries(path)
 
 
-def load_places(path: str = PLACELIST_PATH) -> tuple[list[str], list[str]]:
+def load_places(path: str = config.PLACE_DENYLIST) -> tuple[list[str], list[str]]:
     sections = load_list(path)
     return sections.get("places", []), sections.get("capitalized", [])
 
@@ -424,7 +427,9 @@ def place_recognizers(places: list[str], capitalized: list[str]) -> list[Pattern
 
 
 def custom_recognizers(
-    denylist_path: str = DENYLIST_PATH, venuelist_path: str = VENUELIST_PATH, placelist_path: str = PLACELIST_PATH
+    denylist_path: str = config.NAME_DENYLIST,
+    venuelist_path: str = config.VENUE_DENYLIST,
+    placelist_path: str = config.PLACE_DENYLIST,
 ) -> list[PatternRecognizer]:
     names, ambiguous = load_denylist(denylist_path)
     return (
@@ -445,9 +450,9 @@ class OrderedRegistry(RecognizerRegistry):
 
 
 def build_analyzer(
-    denylist_path: str = DENYLIST_PATH,
-    venuelist_path: str = VENUELIST_PATH,
-    placelist_path: str = PLACELIST_PATH,
+    denylist_path: str = config.NAME_DENYLIST,
+    venuelist_path: str = config.VENUE_DENYLIST,
+    placelist_path: str = config.PLACE_DENYLIST,
     model: str = DEFAULT_MODEL,
 ) -> AnalyzerEngine:
     nlp_engine = NlpEngineProvider(

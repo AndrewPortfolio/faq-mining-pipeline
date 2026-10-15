@@ -17,13 +17,13 @@ from collections import Counter
 from collections.abc import Iterable
 from email.utils import getaddresses
 
+from faq_mining import config
 from shared.pipeline import iter_shard_rows, shard_paths
 
 # Configuration
 
-DEFAULT_INDIR = "data/extracted"
-DEFAULT_OUT = "data/pii/name_denylist.txt"
-DEFAULT_DICT = "/usr/share/dict/words"
+# Old name, kept for anything still importing it; the refactor's Cleanup deletes it
+DEFAULT_DICT = config.ENGLISH_WORDS
 
 # Diacritics folded (Trần -> Tran) so one entry covers both spellings when matching headers
 VIETNAMESE_SURNAMES = {
@@ -296,9 +296,9 @@ def render(names, ambiguous) -> str:
 
 def parse_args(argv=None):
     ap = argparse.ArgumentParser(description="Stage 1 prep: seed the name deny-list")
-    ap.add_argument("--indir", default=DEFAULT_INDIR)
-    ap.add_argument("--out", default=DEFAULT_OUT)
-    ap.add_argument("--dict", default=DEFAULT_DICT, help="word list used to mark ambiguous names")
+    ap.add_argument("--indir", default=config.EXTRACTED_DIR)
+    ap.add_argument("--out", default=config.NAME_DENYLIST)
+    ap.add_argument("--dict", default=config.ENGLISH_WORDS, help="word list used to mark ambiguous names")
     ap.add_argument("--force", action="store_true", help="overwrite an existing (possibly edited) list")
     return ap.parse_args(argv)
 

@@ -21,13 +21,12 @@ from email import policy
 from email.parser import BytesParser
 from email.utils import parsedate_to_datetime
 
+from faq_mining import config
 from shared.pipeline import Checkpoint, Deduper, Progress, ShardWriter, Stats
 from shared.textclean import html_to_text, strip_quoted, unwrap_platform_lead
 
 # Configuration
 
-DEFAULT_MBOX = "data/raw/All mail Including Spam and Trash.mbox"
-DEFAULT_OUTDIR = "data/extracted"
 # counts rows written
 SHARD_SIZE = 2000
 
@@ -374,8 +373,8 @@ def body_fingerprint(row: dict) -> str:
 
 def parse_args(argv=None):
     ap = argparse.ArgumentParser(description="Stage 0: mbox -> JSONL shards")
-    ap.add_argument("--mbox", default=DEFAULT_MBOX)
-    ap.add_argument("--outdir", default=DEFAULT_OUTDIR)
+    ap.add_argument("--mbox", default=config.MBOX)
+    ap.add_argument("--outdir", default=config.EXTRACTED_DIR)
     ap.add_argument("--shard-size", type=int, default=SHARD_SIZE)
     ap.add_argument("--limit", type=int, default=0, help="stop after N messages read")
     ap.add_argument("--restart", action="store_true", help="ignore any checkpoint")
