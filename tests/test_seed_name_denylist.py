@@ -1,15 +1,14 @@
-#Tests for seed_name_denylist (Stage 1 prep)
+# Tests for seed_name_denylist (Stage 1 prep)
 
-#Fixtures are synthetic header rows written to tmp_path --> no real PII, nothing in git
-#The word list is a tiny fake so results don't depend on the machine's /usr/share/dict/words
+# Fixtures are synthetic header rows written to tmp_path --> no real PII, nothing in git
+# The word list is a tiny fake so results don't depend on the machine's /usr/share/dict/words
 
 
 import json
 import unicodedata
 from collections import Counter
 
-from seed_name_denylist import (MIN_LOWERCASE_EMAILS, english_in_use, fold, harvest, main,
-                                name_parts, split_entries)
+from seed_name_denylist import MIN_LOWERCASE_EMAILS, english_in_use, fold, harvest, main, name_parts, split_entries
 
 
 def _row(from_="customer@example.com", to="shop@example.com", body=""):
@@ -20,7 +19,8 @@ def _shards(tmp_path, *rows):
     indir = tmp_path / "extracted"
     indir.mkdir()
     (indir / "emails-00000.jsonl").write_text(
-        "".join(json.dumps(r, ensure_ascii=False) + "\n" for r in rows), encoding="utf-8")
+        "".join(json.dumps(r, ensure_ascii=False) + "\n" for r in rows), encoding="utf-8"
+    )
     return indir
 
 
@@ -33,7 +33,7 @@ def _run(tmp_path, indir, *extra):
 
 
 def _entries(path):
-    #section -> {name: count}; header comments come before the first section so they're skipped
+    # section -> {name: count}; header comments come before the first section so they're skipped
     sections, current = {}, None
     for line in path.read_text(encoding="utf-8").splitlines():
         if line.startswith("["):
@@ -46,8 +46,8 @@ def _entries(path):
 
 # name parsing
 
-class TestNameParsing:
 
+class TestNameParsing:
     def test_fold_strips_vietnamese_diacritics(self):
         assert fold("Nguyễn Đức Trần") == "Nguyen Duc Tran"
 
@@ -55,14 +55,14 @@ class TestNameParsing:
         assert name_parts('"NGUYEN, Mei-Ling J."') == ["Nguyen", "Mei-Ling"]
 
     def test_name_parts_handles_decomposed_unicode(self):
-        #some mail clients send NFD, which would otherwise split "Trần" mid-word
+        # some mail clients send NFD, which would otherwise split "Trần" mid-word
         assert name_parts(unicodedata.normalize("NFD", "Trần Thảo")) == ["Trần", "Thảo"]
 
 
 # harvest
 
-class TestHarvest:
 
+class TestHarvest:
     def test_takes_every_part_of_a_name_with_a_known_surname(self):
         assert harvest([_row(from_='"Thao Nguyen" <thao@example.com>')]) == {"Thao": 1, "Nguyen": 1}
 
@@ -78,17 +78,17 @@ class TestHarvest:
         assert set(harvest([row])) == {"Thao", "Nguyen", "Bob", "Lee"}
 
     def test_counts_each_email_once(self):
-        #a name in both From and To of one email is still one email
+        # a name in both From and To of one email is still one email
         row = _row(from_='"Thao Nguyen" <a@example.com>', to='"Thao Nguyen" <b@example.com>')
         assert harvest([row, row])["Nguyen"] == 2
 
 
 # english_in_use
 
-class TestEnglishInUse:
 
+class TestEnglishInUse:
     def test_needs_dictionary_and_lowercase_use(self):
-        #"wang" is only in the dictionary, "nguyen" is only used lowercase --> neither is ambiguous
+        # "wang" is only in the dictionary, "nguyen" is only used lowercase --> neither is ambiguous
         rows = [_row(body="do you have a song list for nguyen?")] * MIN_LOWERCASE_EMAILS
         assert english_in_use({"do", "song", "wang"}, rows) == {"do", "song"}
 
@@ -105,8 +105,8 @@ class TestEnglishInUse:
 
 # split_entries
 
-class TestSplitEntries:
 
+class TestSplitEntries:
     def test_seed_surnames_kept_without_hits_and_sorted_by_count(self):
         names, _ = split_entries(Counter({"Thao": 3, "Nguyen": 5}), {"Nguyen", "Wong"}, set())
         assert names == [("Nguyen", 5), ("Thao", 3), ("Wong", 0)]
@@ -119,8 +119,8 @@ class TestSplitEntries:
 
 # run
 
-class TestRun:
 
+class TestRun:
     def test_writes_names_and_ambiguous_sections(self, tmp_path):
         chatter = [_row(body="how long do you need for photography?")] * MIN_LOWERCASE_EMAILS
         indir = _shards(tmp_path, _row(from_='"Long Tran Photography" <x@example.com>'), *chatter)
@@ -128,7 +128,7 @@ class TestRun:
         assert code == 0
         entries = _entries(out)
         assert entries["names"]["Tran"] == 1
-        #"Chan" is capitalized in the word list --> a proper noun, not an English word
+        # "Chan" is capitalized in the word list --> a proper noun, not an English word
         assert entries["names"]["Chan"] == 0
         assert entries["ambiguous"] == {"Long": 1, "Photography": 1, "Do": 0}
 

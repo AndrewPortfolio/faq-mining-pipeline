@@ -1,6 +1,6 @@
-#Tests for triage (Stage 4)
+# Tests for triage (Stage 4)
 
-#Fixtures are synthetic chunks and Stage 3 files written to tmp_path --> no real data, nothing in git
+# Fixtures are synthetic chunks and Stage 3 files written to tmp_path --> no real data, nothing in git
 
 import csv
 import json
@@ -17,14 +17,17 @@ QUESTION = "How much does a lion dance cost for a wedding?"
 THANKS = "Thanks so much, sounds good!"
 
 
-@pytest.mark.parametrize("texts, terms, expected", [
-    ([VIETNAMESE] * 3 + [QUESTION], [], ("skip", "non_english")),
-    ([FORM] * 3 + [QUESTION], [], ("skip", "template")),
-    ([FOOTER, QUESTION, QUESTION], [], ("skip", "footer")),
-    ([QUESTION] * 3, ["div", "div style", "line height", "wedding"], ("review", "markup")),
-    ([THANKS] * 9 + [QUESTION], [], ("review", "few_questions")),
-    ([QUESTION, THANKS], ["lion dance", "wedding"], ("faq", "")),
-])
+@pytest.mark.parametrize(
+    "texts, terms, expected",
+    [
+        ([VIETNAMESE] * 3 + [QUESTION], [], ("skip", "non_english")),
+        ([FORM] * 3 + [QUESTION], [], ("skip", "template")),
+        ([FOOTER, QUESTION, QUESTION], [], ("skip", "footer")),
+        ([QUESTION] * 3, ["div", "div style", "line height", "wedding"], ("review", "markup")),
+        ([THANKS] * 9 + [QUESTION], [], ("review", "few_questions")),
+        ([QUESTION, THANKS], ["lion dance", "wedding"], ("faq", "")),
+    ],
+)
 def test_decide(texts, terms, expected):
     assert decide(signals(texts, terms)) == expected
 
@@ -37,22 +40,37 @@ def test_two_markup_terms_are_not_enough():
     assert decide(signals([QUESTION], ["div", "font size", "wedding"])) == ("faq", "")
 
 
-@pytest.mark.parametrize("text, expected", [
-    (VIETNAMESE, True),
-    ("Café crème at the château?", False),
-    (QUESTION, False),
-])
+@pytest.mark.parametrize(
+    "text, expected",
+    [
+        (VIETNAMESE, True),
+        ("Café crème at the château?", False),
+        (QUESTION, False),
+    ],
+)
 def test_is_vietnamese(text, expected):
     assert is_vietnamese(text) is expected
 
 
 # Whole run
 
+
 def _row(n, text, *, direction="inbound", thrid=None, date="2025-01-01T10:00:00+00:00"):
-    return {"chunk_id": f"{n:016x}-0", "id": f"{n:016x}", "thrid": thrid or f"t{n}", "date": date,
-            "direction": direction, "subject": "Question", "chunk_index": 0, "n_chunks": 1,
-            "n_words": len(text.split()), "text": text, "task": "clustering", "model": MODEL,
-            "embedding": [1.0, 0.0]}
+    return {
+        "chunk_id": f"{n:016x}-0",
+        "id": f"{n:016x}",
+        "thrid": thrid or f"t{n}",
+        "date": date,
+        "direction": direction,
+        "subject": "Question",
+        "chunk_index": 0,
+        "n_chunks": 1,
+        "n_words": len(text.split()),
+        "text": text,
+        "task": "clustering",
+        "model": MODEL,
+        "embedding": [1.0, 0.0],
+    }
 
 
 def _setup(tmp_path, drop_assignment=False):
@@ -64,15 +82,16 @@ def _setup(tmp_path, drop_assignment=False):
             n += 1
             rows.append(_row(n, text))
             label[rows[-1]["chunk_id"]] = k
-    rows.append(_row(900, "Yes we can, it is $300.", direction="outbound", thrid="t9",
-                     date="2025-01-02T10:00:00+00:00"))
+    rows.append(
+        _row(900, "Yes we can, it is $300.", direction="outbound", thrid="t9", date="2025-01-02T10:00:00+00:00")
+    )
     indir = tmp_path / "embeddings"
     indir.mkdir()
     (indir / "emails-00000.jsonl").write_text("".join(json.dumps(r) + "\n" for r in rows), encoding="utf-8")
 
     clusters = tmp_path / "clusters"
     clusters.mkdir()
-    assigned = [{"chunk_id": cid, "cluster": k} for cid, k in label.items()][int(drop_assignment):]
+    assigned = [{"chunk_id": cid, "cluster": k} for cid, k in label.items()][int(drop_assignment) :]
     (clusters / "assignments.jsonl").write_text("".join(json.dumps(a) + "\n" for a in assigned), encoding="utf-8")
     with open(clusters / "clusters.csv", "w", encoding="utf-8", newline="") as fh:
         writer = csv.writer(fh, lineterminator="\n")
@@ -98,7 +117,10 @@ def test_writes_one_decision_per_cluster(tmp_path):
         decisions = {int(r["cluster"]): (r["decision"], r["reason"]) for r in csv.DictReader(fh)}
     assert decisions == {0: ("skip", "template"), 1: ("faq", ""), 2: ("skip", "non_english")}
     assert json.loads((outdir / "run.json").read_text())["decisions"] == {
-        "skip template": 1, "faq": 1, "skip non_english": 1}
+        "skip template": 1,
+        "faq": 1,
+        "skip non_english": 1,
+    }
 
 
 def test_candidates_list_faqs_in_full_and_skips_one_line_each(tmp_path):

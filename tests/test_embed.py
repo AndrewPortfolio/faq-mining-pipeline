@@ -1,7 +1,7 @@
-#Tests for embed (Stage 2)
+# Tests for embed (Stage 2)
 
-#Fixtures are synthetic emails written to tmp_path --> no real PII, nothing in git
-#Ollama is faked by patching post_json (or urlopen, for the retry tests), so no server is needed
+# Fixtures are synthetic emails written to tmp_path --> no real PII, nothing in git
+# Ollama is faked by patching post_json (or urlopen, for the retry tests), so no server is needed
 
 import csv
 import io
@@ -12,8 +12,19 @@ import urllib.error
 import pytest
 
 import embed
-from embed import (MAX_ATTEMPTS, PREFIXES, TARGET_WORDS, ContextOverflow, chunk_text, cut_quoted, embed_pieces,
-                   has_content, main, pii_hits, post_json)
+from embed import (
+    MAX_ATTEMPTS,
+    PREFIXES,
+    TARGET_WORDS,
+    ContextOverflow,
+    chunk_text,
+    cut_quoted,
+    embed_pieces,
+    has_content,
+    main,
+    pii_hits,
+    post_json,
+)
 from shared.pipeline import Stats
 
 DIGEST = "0a109f422b47e3a3" + "0" * 48
@@ -29,6 +40,7 @@ def _sizes(chunks):
 
 
 # Chunking
+
 
 def test_short_body_is_one_unchanged_chunk():
     body = "Hi <PERSON>,\n\nHow much is a lion dance for a wedding?\n\nThanks"
@@ -63,13 +75,16 @@ def test_blank_body_has_no_chunks():
     assert chunk_text(" \n\n ") == []
 
 
-@pytest.mark.parametrize("text, expected", [
-    ("", False),
-    ("<PERSON>", False),
-    ("Thanks <PERSON>!", False),
-    ("Thank you so much", True),
-    ("How much for <DATE_TIME> at <LOCATION>?", True),
-])
+@pytest.mark.parametrize(
+    "text, expected",
+    [
+        ("", False),
+        ("<PERSON>", False),
+        ("Thanks <PERSON>!", False),
+        ("Thank you so much", True),
+        ("How much for <DATE_TIME> at <LOCATION>?", True),
+    ],
+)
 def test_has_content(text, expected):
     assert has_content(text) is expected
 
@@ -79,46 +94,63 @@ def test_has_content(text, expected):
 HEADER = "On <DATE_TIME> at 07:23:59 PM PST, <PERSON> <<EMAIL_ADDRESS>> wrote:"
 
 
-@pytest.mark.parametrize("body, kept", [
-    (f"Sounds good, see you then! {HEADER} Hello <PERSON>, Thank you so much for choosing us!",
-     "Sounds good, see you then!"),
-    ("Please see below.From: <PERSON> <<EMAIL_ADDRESS>>Sent: <DATE_TIME> at 04:56:58 PM PDTSubject: Re: Booking",
-     "Please see below."),
-])
+@pytest.mark.parametrize(
+    "body, kept",
+    [
+        (
+            f"Sounds good, see you then! {HEADER} Hello <PERSON>, Thank you so much for choosing us!",
+            "Sounds good, see you then!",
+        ),
+        (
+            "Please see below.From: <PERSON> <<EMAIL_ADDRESS>>Sent: <DATE_TIME> at 04:56:58 PM PDTSubject: Re: Booking",
+            "Please see below.",
+        ),
+    ],
+)
 def test_flattened_quote_header_cuts_the_rest(body, kept):
     assert cut_quoted(body) == kept
 
 
-@pytest.mark.parametrize("body", [
-    "On Saturday I wrote: our vows. Can the drums wait until after?",           # no time or address
-    "We were on the call at 3:00 and you wrote: no travel fee. Is that right?",  # lowercase on
-])
+@pytest.mark.parametrize(
+    "body",
+    [
+        "On Saturday I wrote: our vows. Can the drums wait until after?",  # no time or address
+        "We were on the call at 3:00 and you wrote: no travel fee. Is that right?",  # lowercase on
+    ],
+)
 def test_prose_that_looks_like_a_header_is_kept(body):
     assert cut_quoted(body) == body
 
 
 # PII tripwire
 
-@pytest.mark.parametrize("text, entity", [
-    ("call me at (714)\n555-1234 tonight", "PHONE_NUMBER"),
-    ("my cell is 714-555-1234", "PHONE_NUMBER"),
-    ("or +1 714.555.1234", "PHONE_NUMBER"),
-    ("write to thao@example.com", "EMAIL_ADDRESS"),
-    ("photos at https://example.com/album", "URL"),
-    ("see www.example.com", "URL"),
-    ("follow us @liondance_team", "SOCIAL_HANDLE"),
-])
+
+@pytest.mark.parametrize(
+    "text, entity",
+    [
+        ("call me at (714)\n555-1234 tonight", "PHONE_NUMBER"),
+        ("my cell is 714-555-1234", "PHONE_NUMBER"),
+        ("or +1 714.555.1234", "PHONE_NUMBER"),
+        ("write to thao@example.com", "EMAIL_ADDRESS"),
+        ("photos at https://example.com/album", "URL"),
+        ("see www.example.com", "URL"),
+        ("follow us @liondance_team", "SOCIAL_HANDLE"),
+    ],
+)
 def test_tripwire_fires(text, entity):
     assert [hit["entity_type"] for hit in pii_hits({"subject": "", "body": text})] == [entity]
 
 
-@pytest.mark.parametrize("text", [
-    "[cid:image001.png@01D5A2B3.C4D5E6F0]",
-    "ceremony starts @5pm",
-    "call <PHONE_NUMBER> or email <EMAIL_ADDRESS>, see <URL>",
-    "a $1,500 deposit for 10:30-11:30 on 2024-10-05",
-    "order 1234567890",
-])
+@pytest.mark.parametrize(
+    "text",
+    [
+        "[cid:image001.png@01D5A2B3.C4D5E6F0]",
+        "ceremony starts @5pm",
+        "call <PHONE_NUMBER> or email <EMAIL_ADDRESS>, see <URL>",
+        "a $1,500 deposit for 10:30-11:30 on 2024-10-05",
+        "order 1234567890",
+    ],
+)
 def test_tripwire_ignores(text):
     assert pii_hits({"subject": text, "body": text}) == []
 
@@ -130,6 +162,7 @@ def test_tripwire_reports_where_not_what():
 
 # Resplitting
 
+
 def _overflow_above(limit, calls=None):
     # like Ollama, the whole batch fails when any one input is over the limit
     def fake(texts):
@@ -138,6 +171,7 @@ def _overflow_above(limit, calls=None):
         if any(len(text.split()) > limit for text in texts):
             raise ContextOverflow("the input length exceeds the context length")
         return [[float(len(text.split()))] for text in texts]
+
     return fake
 
 
@@ -165,6 +199,7 @@ def test_one_word_that_overflows_is_an_error():
 
 
 # Talking to Ollama
+
 
 class _Urlopen:
     # stands in for urllib.request.urlopen: raises or answers with each outcome in turn
@@ -204,8 +239,7 @@ def test_server_error_is_retried(monkeypatch):
 
 
 def test_context_overflow_is_not_retried(monkeypatch):
-    urlopen = _patch_urlopen(
-        monkeypatch, _http_error(400, '{"error":"the input length exceeds the context length"}'))
+    urlopen = _patch_urlopen(monkeypatch, _http_error(400, '{"error":"the input length exceeds the context length"}'))
     with pytest.raises(ContextOverflow):
         post_json("http://x/api/embed", {"input": ["x"]})
     assert urlopen.calls == 1
@@ -219,6 +253,7 @@ def test_other_client_errors_are_not_retried(monkeypatch):
 
 
 # End to end, with a fake Ollama
+
 
 def _vector(text):
     # unit length and unique per input length, so a row's vector can be traced back to its text
@@ -239,26 +274,39 @@ class _FakeOllama:
 
 
 def _email(n, body):
-    return {"id": f"{n:016x}", "thrid": f"t{n}", "date": "2025-09-01T10:00:00",
-            "direction": "inbound", "labels": ["Inbox"], "sender": "a1b2", "to": [],
-            "is_automated": False, "subject": f"Question {n}", "body": body,
-            "n_words": len(body.split()), "body_source": "text/plain", "n_attachments": 0,
-            "attachments": [], "offset": n, "n_redacted": 0, "signature_chars": 0}
+    return {
+        "id": f"{n:016x}",
+        "thrid": f"t{n}",
+        "date": "2025-09-01T10:00:00",
+        "direction": "inbound",
+        "labels": ["Inbox"],
+        "sender": "a1b2",
+        "to": [],
+        "is_automated": False,
+        "subject": f"Question {n}",
+        "body": body,
+        "n_words": len(body.split()),
+        "body_source": "text/plain",
+        "n_attachments": 0,
+        "attachments": [],
+        "offset": n,
+        "n_redacted": 0,
+        "signature_chars": 0,
+    }
 
 
 EMAILS = [
     _email(1, "Hi, how much is a lion dance for a wedding reception?"),
-    _email(2, _sentences(650)),                                 # 3 chunks
-    _email(3, "Sure, call me at (714)\n555-1234 to book"),     # quarantined
-    _email(4, "Thanks <PERSON>!"),                              # no content
+    _email(2, _sentences(650)),  # 3 chunks
+    _email(3, "Sure, call me at (714)\n555-1234 to book"),  # quarantined
+    _email(4, "Thanks <PERSON>!"),  # no content
 ]
 
 
 def _setup(tmp_path, emails=EMAILS):
     indir = tmp_path / "redacted"
     indir.mkdir()
-    (indir / "emails-00000.jsonl").write_text(
-        "".join(json.dumps(e) + "\n" for e in emails), encoding="utf-8")
+    (indir / "emails-00000.jsonl").write_text("".join(json.dumps(e) + "\n" for e in emails), encoding="utf-8")
     return indir, tmp_path / "embeddings"
 
 
@@ -279,7 +327,11 @@ def test_writes_one_row_per_chunk_with_its_own_vector(tmp_path, monkeypatch):
     rows = _rows(outdir / "emails-00000.jsonl")
     one, two = EMAILS[0]["id"], EMAILS[1]["id"]
     assert [(r["id"], r["chunk_index"], r["n_chunks"]) for r in rows] == [
-        (one, 0, 1), (two, 0, 3), (two, 1, 3), (two, 2, 3)]
+        (one, 0, 1),
+        (two, 0, 3),
+        (two, 1, 3),
+        (two, 2, 3),
+    ]
     for row in rows:
         assert row["embedding"] == _vector(PREFIXES["clustering"] + row["text"])
         assert row["chunk_id"] == f"{row['id']}-{row['chunk_index']}"
@@ -293,8 +345,15 @@ def test_pii_hit_quarantines_the_email_without_writing_the_pii(tmp_path, monkeyp
     assert EMAILS[2]["id"] not in {r["id"] for r in _rows(outdir / "emails-00000.jsonl")}
     report = (outdir / "emails-00000.quarantine.csv").read_text(encoding="utf-8")
     assert list(csv.DictReader(io.StringIO(report))) == [
-        {"shard": "emails-00000", "email_id": EMAILS[2]["id"], "field": "body",
-         "entity_type": "PHONE_NUMBER", "start": "17", "end": "31"}]
+        {
+            "shard": "emails-00000",
+            "email_id": EMAILS[2]["id"],
+            "field": "body",
+            "entity_type": "PHONE_NUMBER",
+            "start": "17",
+            "end": "31",
+        }
+    ]
     assert "555" not in report
 
 
@@ -307,10 +366,17 @@ def test_stats_count_what_was_skipped(tmp_path, monkeypatch):
 
 def test_atld_unsent_mail_is_not_embedded(tmp_path, monkeypatch):
     # Stage 0 calls a draft inbound, but it's from whoever sent the Sent mail
-    reply = {**_email(5, "Our lion dance is $300 for fifteen minutes."), "direction": "outbound",
-             "labels": ["Sent"], "sender": "atld"}
-    draft = {**_email(6, "Thank you so much for choosing us! This is the confirmation email."),
-             "labels": ["Drafts"], "sender": "atld"}
+    reply = {
+        **_email(5, "Our lion dance is $300 for fifteen minutes."),
+        "direction": "outbound",
+        "labels": ["Sent"],
+        "sender": "atld",
+    }
+    draft = {
+        **_email(6, "Thank you so much for choosing us! This is the confirmation email."),
+        "labels": ["Drafts"],
+        "sender": "atld",
+    }
     indir, outdir = _setup(tmp_path, [EMAILS[0], reply, draft])
     _run(monkeypatch, indir, outdir)
     assert {r["id"] for r in _rows(outdir / "emails-00000.jsonl")} == {EMAILS[0]["id"], reply["id"]}
@@ -373,7 +439,8 @@ def test_vectors_from_before_the_cleaning_need_force(tmp_path, monkeypatch):
 def test_failure_keeps_finished_shards_for_the_rerun(tmp_path, monkeypatch):
     indir, outdir = _setup(tmp_path)
     (indir / "emails-00001.jsonl").write_text(
-        json.dumps(_email(9, "Is parking free at the venue for the drummers?")) + "\n", encoding="utf-8")
+        json.dumps(_email(9, "Is parking free at the venue for the drummers?")) + "\n", encoding="utf-8"
+    )
     ollama = _FakeOllama()
 
     def down_for_parking(url, payload=None):

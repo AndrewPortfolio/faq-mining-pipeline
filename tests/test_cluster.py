@@ -1,7 +1,7 @@
-#Tests for cluster (Stage 3)
+# Tests for cluster (Stage 3)
 
-#Fixtures are synthetic chunk vectors and texts written to tmp_path --> no real data, nothing in git
-#Most tests swap UMAP for a quick SVD projection so numba never compiles; one test runs the real thing
+# Fixtures are synthetic chunk vectors and texts written to tmp_path --> no real data, nothing in git
+# Most tests swap UMAP for a quick SVD projection so numba never compiles; one test runs the real thing
 
 import csv
 import io
@@ -11,8 +11,7 @@ import re
 import numpy as np
 
 import cluster
-from cluster import (by_size, dedupe, first_reply, main, render_page, replies_by_thread,
-                     representatives, top_terms)
+from cluster import by_size, dedupe, first_reply, main, render_page, replies_by_thread, representatives, top_terms
 
 MODEL = "nomic-embed-text@0a109f422b47"
 TOPICS = {
@@ -23,15 +22,35 @@ TOPICS = {
     "cost": "How much does it cost for the instrument team too?",
 }
 PER_TOPIC = 40
-COPIES = 3   # extra copies of the first deposit chunk
+COPIES = 3  # extra copies of the first deposit chunk
 
 
-def _row(n, text, vector, *, direction="inbound", thrid=None, date="2025-01-01T10:00:00+00:00",
-         chunk_index=0, task="clustering"):
-    return {"chunk_id": f"{n:016x}-{chunk_index}", "id": f"{n:016x}", "thrid": thrid or f"t{n}",
-            "date": date, "direction": direction, "subject": "Question", "chunk_index": chunk_index,
-            "n_chunks": 1, "n_words": len(text.split()), "text": text, "task": task, "model": MODEL,
-            "embedding": [float(x) for x in vector]}
+def _row(
+    n,
+    text,
+    vector,
+    *,
+    direction="inbound",
+    thrid=None,
+    date="2025-01-01T10:00:00+00:00",
+    chunk_index=0,
+    task="clustering",
+):
+    return {
+        "chunk_id": f"{n:016x}-{chunk_index}",
+        "id": f"{n:016x}",
+        "thrid": thrid or f"t{n}",
+        "date": date,
+        "direction": direction,
+        "subject": "Question",
+        "chunk_index": chunk_index,
+        "n_chunks": 1,
+        "n_words": len(text.split()),
+        "text": text,
+        "task": task,
+        "model": MODEL,
+        "embedding": [float(x) for x in vector],
+    }
 
 
 def _unit(v):
@@ -46,9 +65,19 @@ def _corpus(seed=0, dims=32):
     for t, text in enumerate(TOPICS.values()):
         for i in range(PER_TOPIC):
             n += 1
-            rows.append(_row(n, f"Hi <PERSON>, {text} Thanks, note {i}", _unit(centres[t] + rng.normal(scale=0.4, size=dims))))
-            rows.append(_row(n + 5000, f"Happy to help with that, answer {n}.", _unit(rng.normal(size=dims)),
-                             direction="outbound", thrid=f"t{n}", date="2025-01-01T12:00:00+00:00"))
+            rows.append(
+                _row(n, f"Hi <PERSON>, {text} Thanks, note {i}", _unit(centres[t] + rng.normal(scale=0.4, size=dims)))
+            )
+            rows.append(
+                _row(
+                    n + 5000,
+                    f"Happy to help with that, answer {n}.",
+                    _unit(rng.normal(size=dims)),
+                    direction="outbound",
+                    thrid=f"t{n}",
+                    date="2025-01-01T12:00:00+00:00",
+                )
+            )
     for c in range(COPIES):
         rows.append(_row(9000 + c, rows[0]["text"], np.array(rows[0]["embedding"])))
     for i in range(20):
@@ -90,8 +119,7 @@ def _assignments(outdir):
 def _topic_labels(assignments):
     # topic -> labels of its chunks (ids 1..40 are the first topic, 41..80 the second, ...)
     by_id = {a["id"]: a["cluster"] for a in assignments}
-    return {topic: [by_id[f"{t * PER_TOPIC + i + 1:016x}"] for i in range(PER_TOPIC)]
-            for t, topic in enumerate(TOPICS)}
+    return {topic: [by_id[f"{t * PER_TOPIC + i + 1:016x}"] for i in range(PER_TOPIC)] for t, topic in enumerate(TOPICS)}
 
 
 def _assert_topics_recovered(assignments):
@@ -105,6 +133,7 @@ def _assert_topics_recovered(assignments):
 
 
 # Helpers
+
 
 def test_dedupe_maps_every_copy_to_one_text():
     first, where = dedupe([{"text": "Same  words"}, {"text": "same words"}, {"text": "other"}])
@@ -147,6 +176,7 @@ def test_first_reply_is_the_next_outbound_chunk_in_the_same_thread():
 
 
 # End to end with the SVD stand-in
+
 
 def test_recovers_each_topic_and_covers_every_inbound_chunk(tmp_path, monkeypatch):
     code, outdir = _run(monkeypatch, tmp_path)
@@ -209,6 +239,7 @@ def test_sweep_prints_every_setting_and_writes_nothing(tmp_path, monkeypatch, ca
 
 # The HTML page
 
+
 def test_page_holds_every_dot_and_cluster(tmp_path, monkeypatch):
     _, outdir = _run(monkeypatch, tmp_path)
     data = _page_data((outdir / "clusters.html").read_text(encoding="utf-8"))
@@ -238,6 +269,7 @@ def test_page_escapes_text_that_would_close_its_script_tag():
 
 
 # The real UMAP
+
 
 def test_real_umap_recovers_topics_and_repeats_exactly(tmp_path, monkeypatch):
     code, first = _run(monkeypatch, tmp_path, real_umap=True, outdir="first")

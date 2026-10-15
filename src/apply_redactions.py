@@ -10,8 +10,8 @@
 from __future__ import annotations
 
 import argparse
-import csv
 import collections
+import csv
 import hashlib
 import hmac
 import json
@@ -30,7 +30,6 @@ from analyze_pii import FIELDS, read_rows, write_atomic
 from shared.pipeline import Checkpoint, Stats, shard_paths
 from shared.signatures import SIGNATURE_ENTITY
 
-
 # Configuration
 
 DEFAULT_INDIR = "data/extracted"
@@ -39,8 +38,8 @@ DEFAULT_OUTDIR = "data/redacted"
 DEFAULT_KEY_PATH = "data/pii/hash_key"
 
 DECISIONS = {"redact", "keep"}
-HASH_CHARS = 16       # 64 bits, more than enough to keep 29k senders apart
-MAX_ERRORS = 20       # printed per shard; the rest are counted
+HASH_CHARS = 16  # 64 bits, more than enough to keep 29k senders apart
+MAX_ERRORS = 20  # printed per shard; the rest are counted
 
 # A signature block goes outright ("replace" with "" falls back to <SIGNATURE>); every other
 # redaction keeps its <ENTITY> tag
@@ -48,6 +47,7 @@ OPERATORS = {SIGNATURE_ENTITY: OperatorConfig("redact")}
 
 
 # Hashing
+
 
 def load_key(path: str) -> bytes:
     # Keyed, because a plain digest of an email address can be cracked by hashing guesses
@@ -78,6 +78,7 @@ def plain_hash(value: str) -> str:
 
 
 # Review files
+
 
 def read_spans(path: str) -> list[dict]:
     with open(path, encoding="utf-8", newline="") as fh:
@@ -137,11 +138,14 @@ def check_nothing_deleted(spans: list[dict], original: list[dict], review: str) 
     if not missing:
         return []
     # A deleted row has no decision at all, so it would slip through unredacted
-    return [f"{review}: {sum(missing.values())} row(s) from the original are gone; "
-            f"set decision to keep instead of deleting. First: {list(missing)[:3]}"]
+    return [
+        f"{review}: {sum(missing.values())} row(s) from the original are gone; "
+        f"set decision to keep instead of deleting. First: {list(missing)[:3]}"
+    ]
 
 
 # Redacting
+
 
 def redact_field(text: str, spans: list[dict], anonymizer) -> tuple[str, int, list[dict], int]:
     results, unfound = [], []
@@ -186,10 +190,14 @@ def redact_row(row: dict, spans: list[dict], key: bytes, anonymizer) -> tuple[di
         "n_words": len(body.split()),
         "body_source": row.get("body_source"),
         "n_attachments": row.get("n_attachments", 0),
-        "attachments": [{"filename": keyed_hash(att.get("filename", ""), key),
-                         "content_type": att.get("content_type", ""),
-                         "approx_bytes": att.get("approx_bytes", 0)}
-                        for att in row.get("attachments") or []],
+        "attachments": [
+            {
+                "filename": keyed_hash(att.get("filename", ""), key),
+                "content_type": att.get("content_type", ""),
+                "approx_bytes": att.get("approx_bytes", 0),
+            }
+            for att in row.get("attachments") or []
+        ],
         "offset": row.get("offset"),
         "n_redacted": applied,
         "signature_chars": signature_chars,
@@ -197,21 +205,27 @@ def redact_row(row: dict, spans: list[dict], key: bytes, anonymizer) -> tuple[di
     return redacted, unfound
 
 
-def redact_shard(rows: list[dict], spans: list[dict], review: str, key: bytes,
-                 anonymizer, stats: Stats) -> tuple[list[dict], list[str]]:
+def redact_shard(
+    rows: list[dict], spans: list[dict], review: str, key: bytes, anonymizer, stats: Stats
+) -> tuple[list[dict], list[str]]:
     by_id: dict[str, list[dict]] = collections.defaultdict(list)
     for span in spans:
         by_id[span["email_id"]].append(span)
 
     ids = {row.get("id") or "" for row in rows}
-    errors = [f"{review}:{span['_line']}: email_id {span['email_id']} is not in this shard"
-              for span in spans if span["email_id"] not in ids]
+    errors = [
+        f"{review}:{span['_line']}: email_id {span['email_id']} is not in this shard"
+        for span in spans
+        if span["email_id"] not in ids
+    ]
 
     out = []
     for row in rows:
         redacted, unfound = redact_row(row, by_id.get(row.get("id") or "", []), key, anonymizer)
-        errors.extend(f"{review}:{span['_line']}: text is no longer in the {span['field']} "
-                      f"of {span['email_id']}" for span in unfound)
+        errors.extend(
+            f"{review}:{span['_line']}: text is no longer in the {span['field']} of {span['email_id']}"
+            for span in unfound
+        )
         stats["spans_redacted"] += redacted["n_redacted"]
         stats["signature_zones"] += redacted["signature_chars"] > 0
         stats["signature_chars"] += redacted["signature_chars"]
@@ -220,6 +234,7 @@ def redact_shard(rows: list[dict], spans: list[dict], review: str, key: bytes,
 
 
 # CLI
+
 
 def parse_args(argv=None):
     ap = argparse.ArgumentParser(description="Stage 1b: apply reviewed redactions")
@@ -269,8 +284,10 @@ def run(args) -> int:
             analyzed = analyzed_ids(view)
             unanalyzed = [r for r in rows if str(r.get("id") or "") not in analyzed]
             if unanalyzed:
-                errors.append(f"{view}: {len(unanalyzed)} of {len(rows)} emails in this shard were "
-                              f"never analyzed (a --limit run, or a stale review file)")
+                errors.append(
+                    f"{view}: {len(unanalyzed)} of {len(rows)} emails in this shard were "
+                    f"never analyzed (a --limit run, or a stale review file)"
+                )
         else:
             errors.append(f"{view}: missing, so unanalyzed emails can't be detected")
         if os.path.exists(original):

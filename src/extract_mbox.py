@@ -1,7 +1,7 @@
-# Stage 0 Cleaning stage: Gmail mbox --> JSONL shards 
-# Gmail mbox: ~98% of file is attachment payload 
-# This file gets rid of them and extracts the email messages into jsonl files 
-#data/extracted/emails-NNNNN.jsonl
+# Stage 0 Cleaning stage: Gmail mbox --> JSONL shards
+# Gmail mbox: ~98% of file is attachment payload
+# This file gets rid of them and extracts the email messages into jsonl files
+# data/extracted/emails-NNNNN.jsonl
 # Usage:
 #     python src/extract_mbox.py                 # full run, resumes if interrupted
 #     python src/extract_mbox.py --limit 500     # quick smoke test
@@ -24,20 +24,19 @@ from email.utils import parsedate_to_datetime
 from shared.pipeline import Checkpoint, Deduper, Progress, ShardWriter, Stats
 from shared.textclean import html_to_text, strip_quoted, unwrap_platform_lead
 
-
-# Configuration 
+# Configuration
 
 DEFAULT_MBOX = "data/raw/All mail Including Spam and Trash.mbox"
 DEFAULT_OUTDIR = "data/extracted"
-#counts rows written 
+# counts rows written
 SHARD_SIZE = 2000
 
 
-# Gmail labels 
+# Gmail labels
 DROP_LABELS = {"Spam", "Trash"}
 SENT_LABEL = "Sent"
 
-#Automated Emails 
+# Automated Emails
 BULK_PRECEDENCE = {"bulk", "list", "junk", "auto_reply"}
 _NOREPLY_RE = re.compile(
     r"(?:^|[.\-_+])(?:no-?reply|do-?not-?reply|donotreply|notification[s]?|"
@@ -45,9 +44,8 @@ _NOREPLY_RE = re.compile(
     re.I,
 )
 
-#Marketing emails --> kept narrow because of WeddingWire 
-_MARKETING_DOMAIN_RE = re.compile(
-    r"@(?:marketing|mktg|campaigns?|promo|newsletter|news|clicks|links)\.", re.I)
+# Marketing emails --> kept narrow because of WeddingWire
+_MARKETING_DOMAIN_RE = re.compile(r"@(?:marketing|mktg|campaigns?|promo|newsletter|news|clicks|links)\.", re.I)
 
 # Senders that are unambiguously machine traffic for this mailbox
 _NOISE_DOMAIN_RE = re.compile(
@@ -56,15 +54,16 @@ _NOISE_DOMAIN_RE = re.compile(
     re.I,
 )
 
-#Old leads --> don't use bark services anymore
-#WeddingWire is still active, so don't discard it 
+# Old leads --> don't use bark services anymore
+# WeddingWire is still active, so don't discard it
 _RETIRED_PLATFORM_RE = re.compile(r"@(?:[\w-]+\.)?bark\.com$", re.I)
 
-#The start of each message thread ID in mbox (digits = Gmail thread ID)
+# The start of each message thread ID in mbox (digits = Gmail thread ID)
 ENVELOPE_RE = re.compile(rb"^From \d+@xxx ")
 
-#counts messages read --> controls how often progress line is printed
+# counts messages read --> controls how often progress line is printed
 PROGRESS_EVERY = 2000
+
 
 # Part decoding
 def decode_part(raw: bytes, encoding: str, charset: str) -> str:
@@ -87,18 +86,19 @@ def decode_part(raw: bytes, encoding: str, charset: str) -> str:
             return raw.decode(cs, errors="strict")
         except (UnicodeDecodeError, LookupError):
             continue
-    # latin-1 maps every byte always succeeds, fallback 
+    # latin-1 maps every byte always succeeds, fallback
     return raw.decode("latin-1")
 
 
-# Streaming mbox reader 
+# Streaming mbox reader
+
 
 def _parse_headers(raw: bytes):
     return BytesParser(policy=policy.default).parsebytes(raw)
 
 
 def _ct_params(value: str):
-    #splits content-type/disposition 
+    # splits content-type/disposition
     parts = value.split(";")
     main = parts[0].strip().lower()
     params = {}
@@ -111,18 +111,32 @@ def _ct_params(value: str):
 
 
 class _MessageBuilder:
-    #discards unnecessary bytes message/* (forwarded emails)
-    #keeps text/* parts (text/plain and text/html)
+    # discards unnecessary bytes message/* (forwarded emails)
+    # keeps text/* parts (text/plain and text/html)
 
     __slots__ = (
-        "offset", "end_offset", "header_lines", "in_headers", "boundaries", "in_part_headers",
-        "part_header_lines", "keep", "buf", "parts", "attachments",
-        "cur_ct", "cur_cte", "cur_charset", "cur_name", "skip_bytes", "headers",
+        "offset",
+        "end_offset",
+        "header_lines",
+        "in_headers",
+        "boundaries",
+        "in_part_headers",
+        "part_header_lines",
+        "keep",
+        "buf",
+        "parts",
+        "attachments",
+        "cur_ct",
+        "cur_cte",
+        "cur_charset",
+        "cur_name",
+        "skip_bytes",
+        "headers",
     )
 
     def __init__(self, offset: int):
         self.offset = offset
-        # Byte offset just past this message: for the resume point 
+        # Byte offset just past this message: for the resume point
         # set by iter_messages once the next envelope line (or EOF) is reached
         self.end_offset = offset
         self.header_lines: list[bytes] = []
@@ -145,18 +159,18 @@ class _MessageBuilder:
 
     def _flush_part(self):
         if self.keep and self.buf:
-            self.parts.append(
-                (self.cur_ct, self.cur_cte, self.cur_charset, b"".join(self.buf))
-            )
+            self.parts.append((self.cur_ct, self.cur_cte, self.cur_charset, b"".join(self.buf)))
         elif self.cur_ct and not self.cur_ct.startswith("multipart/") and self.skip_bytes:
             approx = self.skip_bytes
             if (self.cur_cte or "").lower() == "base64":
                 approx = int(approx * 0.75)
-            self.attachments.append({
-                "filename": self.cur_name,
-                "content_type": self.cur_ct,
-                "approx_bytes": approx,
-            })
+            self.attachments.append(
+                {
+                    "filename": self.cur_name,
+                    "content_type": self.cur_ct,
+                    "approx_bytes": approx,
+                }
+            )
         self.buf = []
         self.skip_bytes = 0
 
@@ -253,11 +267,11 @@ def iter_messages(path: str, start_offset: int = 0):
             yield cur.finish()
 
 
+# Row construction
 
-#Row construction 
 
 def pick_body(builder: _MessageBuilder):
-    #1st choice: text/plain --> fallback to HTML
+    # 1st choice: text/plain --> fallback to HTML
     plain = [p for p in builder.parts if p[0] == "text/plain"]
     if plain:
         text = "\n".join(decode_part(p[3], p[1], p[2]) for p in plain)
@@ -286,7 +300,7 @@ def sender_address(raw: str) -> str:
 
 
 def is_automated(msg, sender: str) -> bool:
-    # returns true for bulk/marketing/notification mail 
+    # returns true for bulk/marketing/notification mail
     if msg.get("List-Unsubscribe") or msg.get("List-Id"):
         return True
     if str(msg.get("Precedence", "")).strip().lower() in BULK_PRECEDENCE:
@@ -349,14 +363,14 @@ def build_row(builder: _MessageBuilder, keep_automated: bool = False):
     }
     return row, None
 
+
 def body_fingerprint(row: dict) -> str:
     norm = re.sub(r"\s+", " ", row["body"]).strip().lower()
-    return hashlib.sha256(
-        f"{row['subject'].strip().lower()}\x00{norm}".encode()
-    ).hexdigest()
+    return hashlib.sha256(f"{row['subject'].strip().lower()}\x00{norm}".encode()).hexdigest()
 
 
-# CLI 
+# CLI
+
 
 def parse_args(argv=None):
     ap = argparse.ArgumentParser(description="Stage 0: mbox -> JSONL shards")
@@ -365,8 +379,9 @@ def parse_args(argv=None):
     ap.add_argument("--shard-size", type=int, default=SHARD_SIZE)
     ap.add_argument("--limit", type=int, default=0, help="stop after N messages read")
     ap.add_argument("--restart", action="store_true", help="ignore any checkpoint")
-    ap.add_argument("--keep-automated", action="store_true",
-                    help="retain bulk/notification mail instead of dropping it")
+    ap.add_argument(
+        "--keep-automated", action="store_true", help="retain bulk/notification mail instead of dropping it"
+    )
     return ap.parse_args(argv)
 
 
@@ -393,12 +408,10 @@ def run(args) -> int:
         shard_index = state["next_shard"]
         stats.update(state.get("stats", {}))
         deduper.load(seen_log)
-        print(f"resuming at byte {start_offset:,} (shard {shard_index}, "
-              f"{len(deduper.prints):,} rows already seen)")
+        print(f"resuming at byte {start_offset:,} (shard {shard_index}, {len(deduper.prints):,} rows already seen)")
 
     writer = ShardWriter(args.outdir, "emails", args.shard_size, shard_index)
-    progress = Progress(total=os.path.getsize(args.mbox), every=PROGRESS_EVERY,
-                        start=start_offset)
+    progress = Progress(total=os.path.getsize(args.mbox), every=PROGRESS_EVERY, start=start_offset)
     resume_offset = start_offset
 
     def persist(offset: int) -> None:
@@ -433,7 +446,7 @@ def run(args) -> int:
     except KeyboardInterrupt:
         print("\ninterrupted; flushing partial shard", file=sys.stderr)
 
-    #writes remaining rows to disk
+    # writes remaining rows to disk
     writer.flush()
     persist(resume_offset)
 

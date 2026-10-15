@@ -3,7 +3,7 @@
 # From/To display names are known people, so harvesting them needs no NER guesswork
 # Writes data/pii/name_denylist.txt --> holds real client names
 # Usage:
-#     python src/seed_name_denylist.py           # refuses to overwrite edited list in data 
+#     python src/seed_name_denylist.py           # refuses to overwrite edited list in data
 #     python src/seed_name_denylist.py --force   # regenerate from scratch
 
 from __future__ import annotations
@@ -14,11 +14,10 @@ import re
 import sys
 import unicodedata
 from collections import Counter
+from collections.abc import Iterable
 from email.utils import getaddresses
-from typing import Iterable
 
 from shared.pipeline import iter_shard_rows, shard_paths
-
 
 # Configuration
 
@@ -28,25 +27,175 @@ DEFAULT_DICT = "/usr/share/dict/words"
 
 # Diacritics folded (Trần -> Tran) so one entry covers both spellings when matching headers
 VIETNAMESE_SURNAMES = {
-    "Bui", "Cao", "Chau", "Dam", "Dang", "Diep", "Dinh", "Do", "Doan", "Duong", "Giang", "Ha",
-    "Ho", "Hoang", "Hua", "Huynh", "Kha", "Khuu", "Kieu", "La", "Lai", "Lam", "Le", "Luong",
-    "Luu", "Ly", "Mac", "Mai", "Ngo", "Nguyen", "Pham", "Phan", "Phung", "Quach", "Ta", "Tang",
-    "Thach", "Thai", "Tieu", "Ton", "Tong", "Tran", "Trieu", "Trinh", "Truong", "Ung", "Vo",
-    "Vu", "Vuong",
+    "Bui",
+    "Cao",
+    "Chau",
+    "Dam",
+    "Dang",
+    "Diep",
+    "Dinh",
+    "Do",
+    "Doan",
+    "Duong",
+    "Giang",
+    "Ha",
+    "Ho",
+    "Hoang",
+    "Hua",
+    "Huynh",
+    "Kha",
+    "Khuu",
+    "Kieu",
+    "La",
+    "Lai",
+    "Lam",
+    "Le",
+    "Luong",
+    "Luu",
+    "Ly",
+    "Mac",
+    "Mai",
+    "Ngo",
+    "Nguyen",
+    "Pham",
+    "Phan",
+    "Phung",
+    "Quach",
+    "Ta",
+    "Tang",
+    "Thach",
+    "Thai",
+    "Tieu",
+    "Ton",
+    "Tong",
+    "Tran",
+    "Trieu",
+    "Trinh",
+    "Truong",
+    "Ung",
+    "Vo",
+    "Vu",
+    "Vuong",
 }
 
 # Mandarin pinyin plus the Cantonese/Hokkien/Wade-Giles spellings common in the US
 CHINESE_SURNAMES = {
-    "Bai", "Cai", "Cao", "Chan", "Chang", "Chen", "Cheng", "Cheung", "Chiang", "Chien", "Chiu",
-    "Choi", "Chong", "Chow", "Chu", "Chua", "Chung", "Deng", "Ding", "Dong", "Du", "Duan",
-    "Fang", "Feng", "Fong", "Fu", "Fung", "Gao", "Goh", "Gu", "Guo", "Han", "Hao", "He", "Hsieh",
-    "Hsu", "Hu", "Huang", "Hui", "Hung", "Jiang", "Jin", "Koh", "Kong", "Kuo", "Kwan", "Kwok",
-    "Kwong", "Lau", "Law", "Lee", "Lei", "Leung", "Li", "Liang", "Liao", "Lim", "Lin", "Liu",
-    "Lo", "Loh", "Lu", "Lui", "Luo", "Ma", "Mak", "Mao", "Meng", "Ng", "Ong", "Pan", "Peng",
-    "Poon", "Qian", "Qin", "Qiu", "Ren", "Shen", "Shi", "Siu", "Song", "Su", "Sun", "Tam", "Tan",
-    "Tang", "Tay", "Teo", "Tian", "Tsai", "Tsang", "Tse", "Wang", "Wei", "Wong", "Wu", "Xiao",
-    "Xie", "Xiong", "Xu", "Yang", "Yao", "Ye", "Yee", "Yeung", "Yin", "Yip", "Yu", "Yuan",
-    "Zeng", "Zhang", "Zhao", "Zheng", "Zhong", "Zhou", "Zhu",
+    "Bai",
+    "Cai",
+    "Cao",
+    "Chan",
+    "Chang",
+    "Chen",
+    "Cheng",
+    "Cheung",
+    "Chiang",
+    "Chien",
+    "Chiu",
+    "Choi",
+    "Chong",
+    "Chow",
+    "Chu",
+    "Chua",
+    "Chung",
+    "Deng",
+    "Ding",
+    "Dong",
+    "Du",
+    "Duan",
+    "Fang",
+    "Feng",
+    "Fong",
+    "Fu",
+    "Fung",
+    "Gao",
+    "Goh",
+    "Gu",
+    "Guo",
+    "Han",
+    "Hao",
+    "He",
+    "Hsieh",
+    "Hsu",
+    "Hu",
+    "Huang",
+    "Hui",
+    "Hung",
+    "Jiang",
+    "Jin",
+    "Koh",
+    "Kong",
+    "Kuo",
+    "Kwan",
+    "Kwok",
+    "Kwong",
+    "Lau",
+    "Law",
+    "Lee",
+    "Lei",
+    "Leung",
+    "Li",
+    "Liang",
+    "Liao",
+    "Lim",
+    "Lin",
+    "Liu",
+    "Lo",
+    "Loh",
+    "Lu",
+    "Lui",
+    "Luo",
+    "Ma",
+    "Mak",
+    "Mao",
+    "Meng",
+    "Ng",
+    "Ong",
+    "Pan",
+    "Peng",
+    "Poon",
+    "Qian",
+    "Qin",
+    "Qiu",
+    "Ren",
+    "Shen",
+    "Shi",
+    "Siu",
+    "Song",
+    "Su",
+    "Sun",
+    "Tam",
+    "Tan",
+    "Tang",
+    "Tay",
+    "Teo",
+    "Tian",
+    "Tsai",
+    "Tsang",
+    "Tse",
+    "Wang",
+    "Wei",
+    "Wong",
+    "Wu",
+    "Xiao",
+    "Xie",
+    "Xiong",
+    "Xu",
+    "Yang",
+    "Yao",
+    "Ye",
+    "Yee",
+    "Yeung",
+    "Yin",
+    "Yip",
+    "Yu",
+    "Yuan",
+    "Zeng",
+    "Zhang",
+    "Zhao",
+    "Zheng",
+    "Zhong",
+    "Zhou",
+    "Zhu",
 }
 
 SURNAMES = VIETNAMESE_SURNAMES | CHINESE_SURNAMES
@@ -74,6 +223,7 @@ HEADER = """\
 
 
 # Name parsing
+
 
 def fold(text: str) -> str:
     # đ has no Unicode decomposition, so NFKD alone would leave it in
@@ -113,8 +263,7 @@ def load_english(path: str) -> set[str]:
         return {w for w in (line.strip() for line in fh) if w.islower()}
 
 
-def english_in_use(english: set[str], rows: Iterable[dict],
-                   min_emails: int = MIN_LOWERCASE_EMAILS) -> set[str]:
+def english_in_use(english: set[str], rows: Iterable[dict], min_emails: int = MIN_LOWERCASE_EMAILS) -> set[str]:
     # Needs both signals: the full dictionary alone flags archaic entries like "wang" and "yang",
     # and inbox usage alone flags names written in lowercase
     usage: Counter = Counter()
@@ -138,10 +287,12 @@ def split_entries(counts: Counter, surnames: set[str], english: set[str]):
 def render(names, ambiguous) -> str:
     def lines(entries):
         return "".join(f"{part:<24}# {n}\n" for part, n in entries)
+
     return f"{HEADER}\n[names]\n{lines(names)}\n[ambiguous]\n{lines(ambiguous)}"
 
 
 # CLI
+
 
 def parse_args(argv=None):
     ap = argparse.ArgumentParser(description="Stage 1 prep: seed the name deny-list")
@@ -157,8 +308,7 @@ def run(args) -> int:
         print(f"error: no shards in {args.indir}", file=sys.stderr)
         return 1
     if os.path.exists(args.out) and not args.force:
-        print(f"error: {args.out} exists and may hold your edits; pass --force to regenerate",
-              file=sys.stderr)
+        print(f"error: {args.out} exists and may hold your edits; pass --force to regenerate", file=sys.stderr)
         return 1
 
     counts = harvest(iter_shard_rows(args.indir))
@@ -172,8 +322,10 @@ def run(args) -> int:
     os.replace(tmp, args.out)
 
     # counts only: the list is real client names, keep them out of terminal scrollback
-    print(f"{len(names):,} names, {len(ambiguous):,} ambiguous "
-          f"({len(counts):,} harvested from headers, {len(SURNAMES):,} seed surnames) -> {args.out}")
+    print(
+        f"{len(names):,} names, {len(ambiguous):,} ambiguous "
+        f"({len(counts):,} harvested from headers, {len(SURNAMES):,} seed surnames) -> {args.out}"
+    )
     return 0
 
 

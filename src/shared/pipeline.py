@@ -1,7 +1,7 @@
 # Read input, proccess it, write JSONL shards
 
-#Stage 0 (mbox extraction), Stage 1 (Presidio redaction) and Stage 2 (Ollama
-#embedding) uses this pipeline
+# Stage 0 (mbox extraction), Stage 1 (Presidio redaction) and Stage 2 (Ollama
+# embedding) uses this pipeline
 
 
 from __future__ import annotations
@@ -11,10 +11,10 @@ import json
 import os
 import time
 from collections import Counter
-from typing import Any, Iterator
+from collections.abc import Iterator
+from typing import Any
 
-
-# Reading 
+# Reading
 
 SHARD_PREFIX = "emails"
 
@@ -26,7 +26,7 @@ def shard_paths(indir: str, prefix: str = SHARD_PREFIX) -> list[str]:
 
 def iter_shard_rows(indir: str, prefix: str = SHARD_PREFIX, skip_shards: int = 0) -> Iterator[dict]:
     # get every row across a directory of JSONL shards in order
-    # Skips shards a previous run already finished 
+    # Skips shards a previous run already finished
     for path in shard_paths(indir, prefix)[skip_shards:]:
         with open(path, encoding="utf-8") as fh:
             for line in fh:
@@ -50,6 +50,7 @@ def read_shard(path: str) -> list[dict]:
 
 # Write
 
+
 def write_atomic(path: str, text: str) -> None:
     # temp file + rename, so a crash never leaves a half-written file behind
     tmp = path + ".part"
@@ -59,12 +60,10 @@ def write_atomic(path: str, text: str) -> None:
 
 
 class ShardWriter:
-
     # Buffer rows (holds in mem) and writes (to disk) a fixed-size JSONL
     # Won't leave a shard half written (unless crash --> next run restarts from the beginning)
 
-    def __init__(self, outdir: str, prefix: str = SHARD_PREFIX,
-                 shard_size: int = 2000, start_index: int = 0):
+    def __init__(self, outdir: str, prefix: str = SHARD_PREFIX, shard_size: int = 2000, start_index: int = 0):
         self.outdir = outdir
         self.prefix = prefix
         self.shard_size = shard_size
@@ -85,7 +84,7 @@ class ShardWriter:
         return False
 
     def flush(self) -> str | None:
-        # writes all buffered rows as the next jsonl shard 
+        # writes all buffered rows as the next jsonl shard
         if not self._buf:
             return None
         path = os.path.join(self.outdir, f"{self.prefix}-{self.index:05d}.jsonl")
@@ -98,7 +97,8 @@ class ShardWriter:
         return path
 
 
-# Resuming 
+# Resuming
+
 
 class Checkpoint:
     # Atomically-persisted resume state
@@ -125,10 +125,11 @@ class Checkpoint:
             os.remove(self.path)
 
 
-# Reporting 
+# Reporting
+
 
 class Stats(Counter):
-    #Counter that renders as an aligned summary block 
+    # Counter that renders as an aligned summary block
     # Because it's a Counter, a missing key counts as 0,
     # so a new drop reason can't crash a long run with a KeyError
 
@@ -140,12 +141,11 @@ class Stats(Counter):
 
 
 class Progress:
-   # Gives periodic updates on progress
-   # In Stage 0, position is in bytes while `every` counts messages,
-   # so the two use different units
+    # Gives periodic updates on progress
+    # In Stage 0, position is in bytes while `every` counts messages,
+    # so the two use different units
 
-    def __init__(self, total: float, every: int = 2000,
-                 start: float = 0.0, unit: str = "MB", scale: float = 1e6):
+    def __init__(self, total: float, every: int = 2000, start: float = 0.0, unit: str = "MB", scale: float = 1e6):
         self.total = max(total, 1)
         self.every = every
         self.start = start
@@ -162,9 +162,10 @@ class Progress:
         elapsed = time.time() - self.t0
         rate = (position - self.start) / elapsed / self.scale if elapsed else 0.0
         remaining = (self.total - position) / (rate * self.scale) if rate else 0.0
-        line = (f"{self.ticks:>7,} | {100.0 * position / self.total:5.1f}% | "
-                f"{rate:6.1f} {self.unit}/s | ETA {remaining / 60:5.1f} min"
-                + (f" | {note}" if note else ""))
+        line = (
+            f"{self.ticks:>7,} | {100.0 * position / self.total:5.1f}% | "
+            f"{rate:6.1f} {self.unit}/s | ETA {remaining / 60:5.1f} min" + (f" | {note}" if note else "")
+        )
         print(line, flush=True)
         return line
 
@@ -172,10 +173,11 @@ class Progress:
         return (time.time() - self.t0) / 60
 
 
-# Deduplication 
+# Deduplication
+
 
 class Deduper:
-    #Two-key dedupe (a strong id plus a content fingerprint)
+    # Two-key dedupe (a strong id plus a content fingerprint)
     # Appends to a log so each save doesn't rewrite every key
     # rewriting would get slower as the output grows
 

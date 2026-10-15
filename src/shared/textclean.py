@@ -1,26 +1,40 @@
-#Pure text-cleaning transforms shared across pipeline stages
+# Pure text-cleaning transforms shared across pipeline stages
 
-#Every function here takes a string and returns a string
-#Nothing in this module knows about email, MIME, or the filesystem
+# Every function here takes a string and returns a string
+# Nothing in this module knows about email, MIME, or the filesystem
 
-#These delete text: an over-match raises no error, just a shorter body --> keep them tested
+# These delete text: an over-match raises no error, just a shorter body --> keep them tested
 
 from __future__ import annotations
 
 import re
 from html.parser import HTMLParser
 
-
 # HTML to text
 
 _BLOCK_TAGS = {
-    "p", "div", "br", "tr", "li", "h1", "h2", "h3", "h4", "h5", "h6",
-    "table", "blockquote", "section", "article", "header", "footer",
+    "p",
+    "div",
+    "br",
+    "tr",
+    "li",
+    "h1",
+    "h2",
+    "h3",
+    "h4",
+    "h5",
+    "h6",
+    "table",
+    "blockquote",
+    "section",
+    "article",
+    "header",
+    "footer",
 }
 
 
 class _HTMLToText(HTMLParser):
-    #Minimal stdlib HTML renderer --> Enough for short emails, no dependency
+    # Minimal stdlib HTML renderer --> Enough for short emails, no dependency
 
     def __init__(self):
         super().__init__(convert_charrefs=True)
@@ -57,6 +71,7 @@ def html_to_text(html: str) -> str:
         # the message entirely.
         return re.sub(r"<[^>]+>", " ", html)
     return parser.text()
+
 
 # Reply, signature and footer trimming
 
@@ -103,14 +118,16 @@ def _first_match(text: str, patterns) -> int:
 
 
 # Lead platforms wrap a short customer message in the same large template
-# If the template was left in, every lead embeds as the 
+# If the template was left in, every lead embeds as the
 # template and they collapse into one meaningless cluster (non-FAQ)
 # This regex only picks which senders get unwrapped (see unwrap_platform_lead)
 _LEAD_SENDER_RE = re.compile(r"@(?:weddingwire|weddingpro)\.", re.I)
 
 _LEAD_INTRO_RE = re.compile(
     r"(?:check out their\s+message|sent you a new message|"
-    r"wants to learn more about your offerings|new message from)\s*:?\s*", re.I)
+    r"wants to learn more about your offerings|new message from)\s*:?\s*",
+    re.I,
+)
 
 # Anchored with re.M rather than a literal "\n": _LEAD_INTRO_RE's trailing
 # \s* eats the newline before this marker, so a \n-anchored pattern could not
@@ -118,22 +135,23 @@ _LEAD_INTRO_RE = re.compile(
 # became the body.
 _LEAD_END_RE = re.compile(
     r"^\s*(?:For:\s|By replying\b|Reply directly\b|View (?:on|this)\b|"
-    r"[A-Z][\w' ]{0,40}'s (?:wedding|event) details\b)", re.I | re.M)
+    r"[A-Z][\w' ]{0,40}'s (?:wedding|event) details\b)",
+    re.I | re.M,
+)
 
-_LEAD_BADGE_RE = re.compile(
-    r"^\s*(?:Messaged You First|Replied to you|New Message|Message)\s*$", re.I | re.M)
+_LEAD_BADGE_RE = re.compile(r"^\s*(?:Messaged You First|Replied to you|New Message|Message)\s*$", re.I | re.M)
 
 
 def unwrap_platform_lead(text: str, sender: str) -> str:
-    #pull customer's written text out of platform lead notif 
+    # pull customer's written text out of platform lead notif
     if not sender or not _LEAD_SENDER_RE.search(sender):
         return text
     # Several intro phrases can appear in one notification
-    # Cut at the last one so no wrapper text survives into the body 
+    # Cut at the last one so no wrapper text survives into the body
     matches = list(_LEAD_INTRO_RE.finditer(text))
     if not matches:
         return text
-    inner = text[matches[-1].end():]
+    inner = text[matches[-1].end() :]
     end = _LEAD_END_RE.search(inner)
     if end:
         inner = inner[: end.start()]
@@ -142,7 +160,7 @@ def unwrap_platform_lead(text: str, sender: str) -> str:
 
 
 def strip_quoted(text: str) -> str:
-    #drop quoted replies/footers/signature blocks --> keep only what this sender wrote
+    # drop quoted replies/footers/signature blocks --> keep only what this sender wrote
     text = text[: _first_match(text, _QUOTE_PATTERNS)]
     text = text[: _first_match(text, _FOOTER_PATTERNS)]
     text = text[: _first_match(text, _SIG_PATTERNS)]
@@ -159,8 +177,9 @@ def strip_quoted(text: str) -> str:
 
 # Zero-width and direction marks (U+FEFF, U+200B-U+200F, soft hyphen, ...). Inside a word they split it, so neither
 # Presidio nor the Stage 2 tripwire sees the name or address it spells. Code points, deleted by str.translate
-_INVISIBLE = dict.fromkeys([0x00AD, 0x180E, *range(0x200B, 0x2010), *range(0x202A, 0x202F),
-                            *range(0x2060, 0x2065), 0xFEFF])
+_INVISIBLE = dict.fromkeys(
+    [0x00AD, 0x180E, *range(0x200B, 0x2010), *range(0x202A, 0x202F), *range(0x2060, 0x2065), 0xFEFF]
+)
 
 
 def strip_invisible(text: str) -> str:

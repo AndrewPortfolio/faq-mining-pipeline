@@ -21,7 +21,6 @@ from shared.decisions import normalize_term
 from shared.pipeline import shard_paths
 from shared.signatures import SIGNATURE_ENTITY
 
-
 # Configuration
 
 DEFAULT_SIZE = 300
@@ -30,6 +29,7 @@ DEFAULT_SEED = 0  # fixed, so a re-generated sample is the same one already read
 
 
 # Drawing
+
 
 def analyzed_emails(indir: str, reviewdir: str) -> list[dict]:
     # only shards with a review file: an unanalyzed email would read as "nothing was caught"
@@ -52,8 +52,7 @@ def top_person_terms(spans: list[dict], n: int) -> list[str]:
     return [term for term, _ in counts.most_common(n)]
 
 
-def draw(emails: list[dict], spans: list[dict], size: int, top_person: int,
-         seed: int) -> list[tuple[dict, str]]:
+def draw(emails: list[dict], spans: list[dict], size: int, top_person: int, seed: int) -> list[tuple[dict, str]]:
     rng = random.Random(seed)
     by_term = collections.defaultdict(list)
     for span in redacted_person(spans):
@@ -73,6 +72,7 @@ def draw(emails: list[dict], spans: list[dict], size: int, top_person: int,
 
 # Rendering
 
+
 def clusters(spans: list[dict]) -> list[dict]:
     # Overlapping spans (ORG "Desert Hills Outlets" over LOCATION "Desert Hills") become one marker,
     # redacted if any member is, because that's what apply_redactions will do to the text
@@ -89,10 +89,13 @@ def clusters(spans: list[dict]) -> list[dict]:
 
 def marker(text: str, cluster: dict) -> str:
     members = cluster["spans"]
-    shown = text[cluster["start"]:cluster["end"]]
+    shown = text[cluster["start"] : cluster["end"]]
     if any(s["decision"] == "redact" for s in members):
-        types = ([SIGNATURE_ENTITY] if any(s["entity_type"] == SIGNATURE_ENTITY for s in members)
-                 else dict.fromkeys(s["entity_type"] for s in members))
+        types = (
+            [SIGNATURE_ENTITY]
+            if any(s["entity_type"] == SIGNATURE_ENTITY for s in members)
+            else dict.fromkeys(s["entity_type"] for s in members)
+        )
         return f"[[REDACT {'/'.join(types)}: {shown}]]"
     why = "/".join(dict.fromkeys(f"{s['entity_type']} {s.get('rule') or '?'}" for s in members))
     return f"[[keep {why}: {shown}]]"
@@ -100,20 +103,26 @@ def marker(text: str, cluster: dict) -> str:
 
 def render(email: dict, spans: list[dict], n: int, total: int, reason: str) -> str:
     redact = sum(1 for s in spans if s["decision"] == "redact")
-    lines = [f"=== [{n}/{total}] {reason} | {email.get('id')} | thrid {email.get('thrid')} | "
-             f"{len(spans)} spans ({redact} redact, {len(spans) - redact} keep)"]
+    lines = [
+        f"=== [{n}/{total}] {reason} | {email.get('id')} | thrid {email.get('thrid')} | "
+        f"{len(spans)} spans ({redact} redact, {len(spans) - redact} keep)"
+    ]
     for field in FIELDS:
         text = email.get(field) or ""
         # a SIGNATURE row set to keep changes nothing in the output, so it isn't drawn
-        shown = [s for s in spans if s["field"] == field
-                 and not (s["entity_type"] == SIGNATURE_ENTITY and s["decision"] != "redact")]
+        shown = [
+            s
+            for s in spans
+            if s["field"] == field and not (s["entity_type"] == SIGNATURE_ENTITY and s["decision"] != "redact")
+        ]
         for cluster in reversed(clusters(shown)):
-            text = f"{text[:cluster['start']]}{marker(text, cluster)}{text[cluster['end']:]}"
+            text = f"{text[: cluster['start']]}{marker(text, cluster)}{text[cluster['end'] :]}"
         lines.append(f"{field}: {text}")
     return "\n".join(lines) + "\n"
 
 
 # CLI
+
 
 def parse_args(argv=None):
     ap = argparse.ArgumentParser(description="Stratified sample of analyzed emails for a confidence read")
@@ -138,8 +147,10 @@ def run(args) -> int:
 
     picked = draw(emails, spans, args.size, args.top_person, args.seed)
     out = args.out or os.path.join(args.reviewdir, "sample.txt")
-    write_atomic(out, "\n".join(render(e, by_email[e.get("id")], n, len(picked), reason)
-                                for n, (e, reason) in enumerate(picked, 1)))
+    write_atomic(
+        out,
+        "\n".join(render(e, by_email[e.get("id")], n, len(picked), reason) for n, (e, reason) in enumerate(picked, 1)),
+    )
     top = sum(1 for _, reason in picked if reason != "random")
     print(f"{len(picked)} emails ({top} top-PERSON, {len(picked) - top} random, seed {args.seed}) -> {out}")
     return 0
