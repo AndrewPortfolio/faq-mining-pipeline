@@ -28,7 +28,8 @@ from presidio_anonymizer.entities import OperatorConfig
 # the review-file contract lives with the script that writes it
 from analyze_pii import FIELDS, read_rows, write_atomic
 from faq_mining import config
-from shared.pipeline import Checkpoint, Stats, shard_paths
+from faq_mining.utils.reporting import Stats
+from shared.pipeline import Checkpoint, shard_paths
 from shared.signatures import SIGNATURE_ENTITY
 
 # Configuration
