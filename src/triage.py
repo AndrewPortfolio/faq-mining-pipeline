@@ -26,7 +26,6 @@ from cluster import first_reply, load_chunks, render_report, replies_by_thread, 
 from shared.pipeline import Stats, write_atomic
 from shared.signatures import FORM_MARKERS
 
-
 # Configuration
 
 DEFAULT_CLUSTERS = "data/clusters"
@@ -34,17 +33,28 @@ DEFAULT_INDIR = "data/embeddings/clustering"
 DEFAULT_OUTDIR = "data/faqs"
 
 # Each skip threshold sits in a wide gap measured on the first full run (lowest flagged vs highest not flagged)
-VIETNAMESE_SHARE = 0.5   # 0.94 vs 0.21: nomic-embed-text is mostly English, so it groups these by language
-VIETNAMESE_LETTERS = 5   # letters only Vietnamese spelling uses, per chunk
-TEMPLATE_SHARE = 0.5     # 0.63 vs 0.33: the website form, and clients filling in the confirmation template
-FOOTER_SHARE = 0.3       # 0.57 vs 0.04
+VIETNAMESE_SHARE = 0.5  # 0.94 vs 0.21: nomic-embed-text is mostly English, so it groups these by language
+VIETNAMESE_LETTERS = 5  # letters only Vietnamese spelling uses, per chunk
+TEMPLATE_SHARE = 0.5  # 0.63 vs 0.33: the website form, and clients filling in the confirmation template
+FOOTER_SHARE = 0.3  # 0.57 vs 0.04
 # Review, never skip: 107 is HTML around a real topic, and the question share has no gap at all
 # (14 clusters at 0%, 64 at <=20%) with some inquiries written as statements
-MARKUP_TERMS = 3         # top terms made only of HTML/CSS words
+MARKUP_TERMS = 3  # top terms made only of HTML/CSS words
 QUESTION_SHARE = 0.10
 
-TRIAGE_COLUMNS = ["cluster", "decision", "reason", "n_chunks", "n_emails", "question_share", "vietnamese_share",
-                  "template_share", "footer_share", "markup_terms", "top_terms"]
+TRIAGE_COLUMNS = [
+    "cluster",
+    "decision",
+    "reason",
+    "n_chunks",
+    "n_emails",
+    "question_share",
+    "vietnamese_share",
+    "template_share",
+    "footer_share",
+    "markup_terms",
+    "top_terms",
+]
 
 # (decision, reason, heading) in the order candidates.txt lists them
 SECTIONS = [
@@ -55,15 +65,31 @@ SECTIONS = [
 
 _VIETNAMESE_RE = re.compile(r"[ăâđêôơưạảấầẩẫậắằẳẵặẹẻẽếềểễệỉịọỏốồổỗộớờởỡợụủứừửữựỳỵỷỹ]", re.IGNORECASE)
 # Notice phrases, not signatures.DISCLAIMER: its bare "confidential" also turns up in real questions
-_FOOTER_RE = re.compile(r"confidential(?:ity)?(?: and privilege)? (?:notice|warning)|statement of confidentiality|"
-                        r"intended recipient|the preceding (?:e-?mail )?message|privileged and confidential",
-                        re.IGNORECASE)
+_FOOTER_RE = re.compile(
+    r"confidential(?:ity)?(?: and privilege)? (?:notice|warning)|statement of confidentiality|"
+    r"intended recipient|the preceding (?:e-?mail )?message|privileged and confidential",
+    re.IGNORECASE,
+)
 # Left by Stage 0's HTML->text fallback: "div style", "font face aptos", "line height"
-_MARKUP_WORDS = {"div", "span", "br", "font", "face", "aptos", "calibri", "style", "margin", "nbsp",
-                 "line", "height", "size"}
+_MARKUP_WORDS = {
+    "div",
+    "span",
+    "br",
+    "font",
+    "face",
+    "aptos",
+    "calibri",
+    "style",
+    "margin",
+    "nbsp",
+    "line",
+    "height",
+    "size",
+}
 
 
 # Rules
+
 
 def is_vietnamese(text: str) -> bool:
     return len(_VIETNAMESE_RE.findall(text)) >= VIETNAMESE_LETTERS
@@ -98,6 +124,7 @@ def decide(s: dict) -> tuple[str, str]:
 
 # Loading
 
+
 def load(clusters_dir: str, indir: str) -> tuple[list[dict], list[dict], dict, dict, dict]:
     # -> (cluster summaries with decisions, inbound rows, chunk_id -> cluster, reply threads, Stage 3's run.json)
     inbound, _, outbound, model = load_chunks(indir)
@@ -122,21 +149,38 @@ def load(clusters_dir: str, indir: str) -> tuple[list[dict], list[dict], dict, d
         s = signals(members[k], terms)
         decision, reason = decide(s)
         reps = [by_id[chunk_id] for chunk_id in c["representatives"].split()]
-        summaries.append({"cluster": k, "n_chunks": int(c["n_chunks"]), "n_emails": int(c["n_emails"]),
-                          "n_threads": int(c["n_threads"]), "top_terms": terms, "representatives": reps,
-                          "replies": replies_for(reps, threads), "decision": decision, "reason": reason, **s})
+        summaries.append(
+            {
+                "cluster": k,
+                "n_chunks": int(c["n_chunks"]),
+                "n_emails": int(c["n_emails"]),
+                "n_threads": int(c["n_threads"]),
+                "top_terms": terms,
+                "representatives": reps,
+                "replies": replies_for(reps, threads),
+                "decision": decision,
+                "reason": reason,
+                **s,
+            }
+        )
     return summaries, inbound, label, threads, stage3
 
 
 # Writing
+
 
 def render_triage(summaries: list[dict]) -> str:
     buf = io.StringIO()
     writer = csv.DictWriter(buf, fieldnames=TRIAGE_COLUMNS, extrasaction="ignore", lineterminator="\n")
     writer.writeheader()
     for s in summaries:
-        writer.writerow({**s, **{k: round(v, 2) for k, v in s.items() if k.endswith("_share")},
-                         "top_terms": "; ".join(s["top_terms"])})
+        writer.writerow(
+            {
+                **s,
+                **{k: round(v, 2) for k, v in s.items() if k.endswith("_share")},
+                "top_terms": "; ".join(s["top_terms"]),
+            }
+        )
     return buf.getvalue()
 
 
@@ -146,9 +190,16 @@ def render_candidates(summaries: list[dict], header: list[str]) -> str:
         group = [s for s in summaries if (s["decision"], s["reason"]) == (decision, reason)]
         parts.append(render_report(group, [f"##### {heading}: {len(group)} clusters"]))
     skipped = [s for s in summaries if s["decision"] == "skip"]
-    parts.append("\n".join([f"##### Skipped: {len(skipped)} clusters"] + [
-        f"  cluster {s['cluster']} | {s['n_chunks']:,} chunks | {s['reason']} | {', '.join(s['top_terms'])}"
-        for s in skipped]) + "\n")
+    parts.append(
+        "\n".join(
+            [f"##### Skipped: {len(skipped)} clusters"]
+            + [
+                f"  cluster {s['cluster']} | {s['n_chunks']:,} chunks | {s['reason']} | {', '.join(s['top_terms'])}"
+                for s in skipped
+            ]
+        )
+        + "\n"
+    )
     return "\n\n".join(part.rstrip("\n") for part in parts) + "\n"
 
 
@@ -159,14 +210,18 @@ def render_read_by_hand(inbound: list[dict], label: dict, threads: dict) -> str:
         if is_vietnamese(row["text"]):
             chunks[row["thrid"]].append(row)
     total = sum(len(rows) for rows in chunks.values())
-    lines = [f"# {total:,} Vietnamese chunks in {len(chunks):,} threads, read by hand: the model groups them "
-             f"by language, not topic"]
+    lines = [
+        f"# {total:,} Vietnamese chunks in {len(chunks):,} threads, read by hand: the model groups them "
+        f"by language, not topic"
+    ]
     for thrid, rows in sorted(chunks.items(), key=lambda kv: min(r.get("date") or "" for r in kv[1])):
         rows.sort(key=lambda r: (r.get("date") or "", r["chunk_index"]))
         lines += ["", f"=== thread {thrid}"]
         shown = set()
         for row in rows:
-            lines.append(f"  [{row.get('date') or '?'} | cluster {label[row['chunk_id']]}] {' '.join(row['text'].split())}")
+            lines.append(
+                f"  [{row.get('date') or '?'} | cluster {label[row['chunk_id']]}] {' '.join(row['text'].split())}"
+            )
             reply = first_reply(row, threads)
             if reply and reply["chunk_id"] not in shown:  # an email's later chunks share its reply
                 shown.add(reply["chunk_id"])
@@ -175,6 +230,7 @@ def render_read_by_hand(inbound: list[dict], label: dict, threads: dict) -> str:
 
 
 # CLI
+
 
 def parse_args(argv=None):
     ap = argparse.ArgumentParser(description="Stage 4: sort clusters into FAQ candidates, review, and noise")
@@ -193,21 +249,32 @@ def run(args) -> int:
 
     stats = Stats(f"{s['decision']} {s['reason']}".strip() for s in summaries)
     counts = collections.Counter(s["decision"] for s in summaries)
-    header = [f"# {counts['faq']} FAQ candidates, {counts['review']} to review, {counts['skip']} skipped "
-              f"of {len(summaries)} clusters in {args.clusters}",
-              f"# Stage 3: min_cluster_size {stage3.get('min_cluster_size')}, method {stage3.get('method')}, "
-              f"seed {stage3.get('seed')} | {stage3.get('model')}"]
-    thresholds = {"vietnamese_share": VIETNAMESE_SHARE, "vietnamese_letters": VIETNAMESE_LETTERS,
-                  "template_share": TEMPLATE_SHARE, "footer_share": FOOTER_SHARE, "markup_terms": MARKUP_TERMS,
-                  "question_share": QUESTION_SHARE}
+    header = [
+        f"# {counts['faq']} FAQ candidates, {counts['review']} to review, {counts['skip']} skipped "
+        f"of {len(summaries)} clusters in {args.clusters}",
+        f"# Stage 3: min_cluster_size {stage3.get('min_cluster_size')}, method {stage3.get('method')}, "
+        f"seed {stage3.get('seed')} | {stage3.get('model')}",
+    ]
+    thresholds = {
+        "vietnamese_share": VIETNAMESE_SHARE,
+        "vietnamese_letters": VIETNAMESE_LETTERS,
+        "template_share": TEMPLATE_SHARE,
+        "footer_share": FOOTER_SHARE,
+        "markup_terms": MARKUP_TERMS,
+        "question_share": QUESTION_SHARE,
+    }
 
     os.makedirs(args.outdir, exist_ok=True)
     write_atomic(os.path.join(args.outdir, "triage.csv"), render_triage(summaries))
     write_atomic(os.path.join(args.outdir, "candidates.txt"), render_candidates(summaries, header))
     write_atomic(os.path.join(args.outdir, "read_by_hand.txt"), render_read_by_hand(inbound, label, threads))
-    write_atomic(os.path.join(args.outdir, "run.json"), json.dumps(
-        {"clusters": args.clusters, "stage3": stage3, "thresholds": thresholds, "decisions": dict(stats)},
-        indent=2) + "\n")
+    write_atomic(
+        os.path.join(args.outdir, "run.json"),
+        json.dumps(
+            {"clusters": args.clusters, "stage3": stage3, "thresholds": thresholds, "decisions": dict(stats)}, indent=2
+        )
+        + "\n",
+    )
 
     print(f"-> {args.outdir}")
     print(stats.render())

@@ -27,7 +27,6 @@ import urllib.request
 
 from shared.pipeline import Checkpoint, Progress, Stats, iter_shard_rows, read_shard, shard_paths, write_atomic
 
-
 # Configuration
 
 DEFAULT_INDIR = "data/redacted"
@@ -43,11 +42,11 @@ PREFIXES = {"clustering": "clustering: ", "search_document": "search_document: "
 # ~370 tokens at the measured ~1.2 tokens/word. The installed model's real context is 2048 tokens
 # (its Modelfile's num_ctx 8192 is ignored); chunks stay small for retrieval precision, see CLAUDE.md
 TARGET_WORDS = 300
-MIN_WORDS = 3          # real words a chunk needs once its <ENTITY> tags are gone
-BATCH_SIZE = 32        # throughput is flat from 8 to 64 (~27 inputs/s), and a small batch is cheap to redo
+MIN_WORDS = 3  # real words a chunk needs once its <ENTITY> tags are gone
+BATCH_SIZE = 32  # throughput is flat from 8 to 64 (~27 inputs/s), and a small batch is cheap to redo
 REQUEST_TIMEOUT = 120  # the slowest measured batch took 2.5 s, a cold model load 1.1 s
-MAX_ATTEMPTS = 3       # per request, then the run stops; finished shards are kept
-CLEAN_VERSION = 1      # bump when what's skipped or cut changes, so old and new vectors can't mix
+MAX_ATTEMPTS = 3  # per request, then the run stops; finished shards are kept
+CLEAN_VERSION = 1  # bump when what's skipped or cut changes, so old and new vectors can't mix
 
 QUARANTINE_COLUMNS = ["shard", "email_id", "field", "entity_type", "start", "end"]
 
@@ -76,7 +75,7 @@ def _units(body: str) -> list[tuple[str, bool]]:
                 continue
             size = math.ceil(len(words) / math.ceil(len(words) / TARGET_WORDS))
             for i in range(0, len(words), size):
-                units.append((" ".join(words[i:i + size]), first))
+                units.append((" ".join(words[i : i + size]), first))
                 first = False
     return units
 
@@ -116,14 +115,16 @@ def has_content(text: str) -> bool:
 # <PERSON> <<EMAIL_ADDRESS>> wrote: Hello...", "...<<EMAIL_ADDRESS>>Sent: ... PMSubject:"), where its line-anchored
 # patterns can't match. It leans on Stage 1's tags, so it lives here, not in textclean. Case-sensitive: real
 # headers capitalize On and From
-_FLAT_QUOTE_RE = re.compile(r"\bOn\b[^\n]{0,120}?(?:<EMAIL_ADDRESS>|\d{1,2}:\d{2})[^\n]{0,120}?\bwrote:"
-                            r"|From:[^\n]{0,150}?(?:Sent|Date):[^\n]{0,80}?(?:To|Subject):")
+_FLAT_QUOTE_RE = re.compile(
+    r"\bOn\b[^\n]{0,120}?(?:<EMAIL_ADDRESS>|\d{1,2}:\d{2})[^\n]{0,120}?\bwrote:"
+    r"|From:[^\n]{0,150}?(?:Sent|Date):[^\n]{0,80}?(?:To|Subject):"
+)
 
 
 def cut_quoted(body: str) -> str:
     # everything after the header is older mail, often ATLD's own words quoted back
     m = _FLAT_QUOTE_RE.search(body)
-    return body[:m.start()].rstrip() if m else body
+    return body[: m.start()].rstrip() if m else body
 
 
 # PII tripwire
@@ -146,8 +147,10 @@ def pii_hits(row: dict) -> list[dict]:
     for field in ("subject", "body"):
         text = row.get(field) or ""
         for entity, pattern in PII_PATTERNS.items():
-            hits.extend({"field": field, "entity_type": entity, "start": m.start(), "end": m.end()}
-                        for m in pattern.finditer(text))
+            hits.extend(
+                {"field": field, "entity_type": entity, "start": m.start(), "end": m.end()}
+                for m in pattern.finditer(text)
+            )
     return hits
 
 
@@ -160,6 +163,7 @@ def render_quarantine(hits: list[dict]) -> str:
 
 
 # Ollama
+
 
 class ContextOverflow(Exception):
     # an input longer than the model's context; it only surfaces because requests send truncate=false
@@ -174,8 +178,7 @@ def post_json(url: str, payload: dict | None = None) -> dict:
     failure = ""
     for attempt in range(1, MAX_ATTEMPTS + 1):
         if attempt > 1:
-            print(f"  {url} failed ({failure}); retry {attempt - 1} of {MAX_ATTEMPTS - 1}",
-                  file=sys.stderr)
+            print(f"  {url} failed ({failure}); retry {attempt - 1} of {MAX_ATTEMPTS - 1}", file=sys.stderr)
             time.sleep(2 * (attempt - 1))
         try:
             with urllib.request.urlopen(request, timeout=REQUEST_TIMEOUT) as response:
@@ -212,8 +215,7 @@ def unit(vector: list[float]) -> list[float]:
 def embed_batch(texts: list[str], *, url: str, model: str, prefix: str) -> list[list[float]]:
     # truncate=false matters: Ollama's default silently cuts anything past 2048 tokens, so an
     # overflow would never reach embed_pieces to be split
-    reply = post_json(f"{url}/api/embed", {"model": model, "input": [prefix + t for t in texts],
-                                           "truncate": False})
+    reply = post_json(f"{url}/api/embed", {"model": model, "input": [prefix + t for t in texts], "truncate": False})
     vectors = reply.get("embeddings") or []
     if len(vectors) != len(texts):
         raise RuntimeError(f"Ollama sent {len(vectors)} vectors for {len(texts)} inputs")
@@ -235,14 +237,18 @@ def embed_pieces(texts: list[str], embed, stats: Stats) -> list[list[tuple[str, 
         raise ContextOverflow(f"one {len(texts[0])}-character word is longer than the model's context")
     stats["resplits"] += 1
     half = len(words) // 2
-    return [embed_pieces([" ".join(words[:half])], embed, stats)[0]
-            + embed_pieces([" ".join(words[half:])], embed, stats)[0]]
+    return [
+        embed_pieces([" ".join(words[:half])], embed, stats)[0]
+        + embed_pieces([" ".join(words[half:])], embed, stats)[0]
+    ]
 
 
 # Shards
 
-def embed_shard(rows: list[dict], shard: str, embed, batch_size: int, stats: Stats,
-                *, task: str, model: str, own: set[str]) -> tuple[list[dict], list[dict]]:
+
+def embed_shard(
+    rows: list[dict], shard: str, embed, batch_size: int, stats: Stats, *, task: str, model: str, own: set[str]
+) -> tuple[list[dict], list[dict]]:
     # returns (output rows, quarantine rows); own holds ATLD's sender hashes
     pending, quarantine = [], []  # pending holds (row index, chunk text)
     for index, row in enumerate(rows):
@@ -263,7 +269,7 @@ def embed_shard(rows: list[dict], shard: str, embed, batch_size: int, stats: Sta
 
     pieces = []
     for start in range(0, len(pending), batch_size):
-        batch = [text for _, text in pending[start:start + batch_size]]
+        batch = [text for _, text in pending[start : start + batch_size]]
         pieces.extend(embed_pieces(batch, embed, stats))
 
     # a resplit can turn one chunk into several, so chunk numbers are given out only now
@@ -274,21 +280,23 @@ def embed_shard(rows: list[dict], shard: str, embed, batch_size: int, stats: Sta
     for index, pairs in by_row.items():
         row = rows[index]
         for i, (text, vector) in enumerate(pairs):
-            out.append({
-                "chunk_id": f"{row.get('id')}-{i}",
-                "id": row.get("id"),
-                "thrid": row.get("thrid"),
-                "date": row.get("date"),
-                "direction": row.get("direction"),
-                "subject": row.get("subject"),
-                "chunk_index": i,
-                "n_chunks": len(pairs),
-                "n_words": len(text.split()),
-                "text": text,
-                "task": task,
-                "model": model,
-                "embedding": vector,
-            })
+            out.append(
+                {
+                    "chunk_id": f"{row.get('id')}-{i}",
+                    "id": row.get("id"),
+                    "thrid": row.get("thrid"),
+                    "date": row.get("date"),
+                    "direction": row.get("direction"),
+                    "subject": row.get("subject"),
+                    "chunk_index": i,
+                    "n_chunks": len(pairs),
+                    "n_words": len(text.split()),
+                    "text": text,
+                    "task": task,
+                    "model": model,
+                    "embedding": vector,
+                }
+            )
         stats["emails"] += 1
         stats["chunks"] += len(pairs)
     return out, quarantine
@@ -301,17 +309,21 @@ def _rows_in(path: str) -> int:
 
 # CLI
 
+
 def parse_args(argv=None):
     ap = argparse.ArgumentParser(description="Stage 2: chunk redacted emails and embed them with Ollama")
     ap.add_argument("--indir", default=DEFAULT_INDIR)
-    ap.add_argument("--task", choices=sorted(PREFIXES), default="clustering",
-                    help="nomic task prefix; each task is its own vector set")
+    ap.add_argument(
+        "--task",
+        choices=sorted(PREFIXES),
+        default="clustering",
+        help="nomic task prefix; each task is its own vector set",
+    )
     ap.add_argument("--outdir", help=f"default: {DEFAULT_OUTROOT}/<task>")
     ap.add_argument("--model", default=DEFAULT_MODEL)
     ap.add_argument("--url", default=DEFAULT_URL, help="Ollama server")
     ap.add_argument("--batch-size", type=int, default=BATCH_SIZE)
-    ap.add_argument("--limit", type=int, default=0,
-                    help="smoke test: embed the first N emails into <outdir>/smoke")
+    ap.add_argument("--limit", type=int, default=0, help="smoke test: embed the first N emails into <outdir>/smoke")
     ap.add_argument("--force", action="store_true", help="rebuild shards already embedded")
     return ap.parse_args(argv)
 
@@ -334,8 +346,14 @@ def run(args) -> int:
     except RuntimeError as err:
         print(f"error: {err}", file=sys.stderr)
         return 1
-    config = {"model": args.model, "digest": digest, "task": args.task,
-              "target_words": TARGET_WORDS, "min_words": MIN_WORDS, "clean": CLEAN_VERSION}
+    config = {
+        "model": args.model,
+        "digest": digest,
+        "task": args.task,
+        "target_words": TARGET_WORDS,
+        "min_words": MIN_WORDS,
+        "clean": CLEAN_VERSION,
+    }
 
     checkpoint = Checkpoint(os.path.join(outdir, "checkpoint.json"))
     rebuild = args.force or bool(args.limit)  # a smoke test always starts over
@@ -344,8 +362,11 @@ def run(args) -> int:
     state = checkpoint.load() or {}
     if state.get("config", config) != config:
         # vectors from another model, task or chunking in one set would quietly skew Stage 3
-        print(f"error: {outdir} was built with {state['config']}, not {config}; "
-              f"rerun with --force to rebuild every shard", file=sys.stderr)
+        print(
+            f"error: {outdir} was built with {state['config']}, not {config}; "
+            f"rerun with --force to rebuild every shard",
+            file=sys.stderr,
+        )
         return 1
     stats = Stats()
     stats.update(state.get("stats", {}))
@@ -365,18 +386,18 @@ def run(args) -> int:
     # ATLD is whoever sent the Sent mail; the sender is a keyed hash, so it can't be written down here
     own = {row.get("sender") for row in iter_shard_rows(args.indir) if row.get("direction") == "outbound"} - {None, ""}
     total = sum(_rows_in(path) for _, path, _ in todo)
-    progress = Progress(total=min(total, args.limit) if args.limit else total, every=1,
-                        unit="emails", scale=1.0)
+    progress = Progress(total=min(total, args.limit) if args.limit else total, every=1, unit="emails", scale=1.0)
     done = 0
     try:
         for name, path, out_path in todo:
             rows = read_shard(path)
             if args.limit:
-                rows = rows[:max(0, args.limit - done)]
+                rows = rows[: max(0, args.limit - done)]
                 if not rows:
                     break
-            out, quarantine = embed_shard(rows, name, embed, args.batch_size, stats,
-                                          task=args.task, model=model, own=own)
+            out, quarantine = embed_shard(
+                rows, name, embed, args.batch_size, stats, task=args.task, model=model, own=own
+            )
             # the quarantine list goes first: the shard's output is what marks it finished
             quarantine_path = os.path.join(outdir, f"{name}.quarantine.csv")
             if quarantine:

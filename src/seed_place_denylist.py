@@ -14,7 +14,7 @@ import os
 import re
 import sys
 from collections import Counter, defaultdict
-from typing import Iterable, Iterator
+from collections.abc import Iterable, Iterator
 
 from analyze_pii import DEFAULT_INDIR, DEFAULT_OUTDIR, FIELDS, read_rows, review_spans, write_atomic
 from seed_name_denylist import DEFAULT_DICT, english_in_use, load_english
@@ -22,16 +22,15 @@ from shared.decisions import COMMON_LOCATION_PATH, normalize_term
 from shared.pii_recognizers import PLACELIST_PATH, load_entries
 from shared.pipeline import shard_paths
 
-
 # Configuration
 
 # Only trf's own spans vote: a re-seed after a run would otherwise count this list's own hits
 # and push every listed term toward 100%
 VOTER = "SpacyRecognizer"
 
-MIN_MENTIONS = 2        # a single mention is already whatever trf made of it; nothing to carry over
+MIN_MENTIONS = 2  # a single mention is already whatever trf made of it; nothing to carry over
 MIN_TAGGED_SHARE = 0.5  # measured: drops lions (1 of 18,537) and paris; 0.7 would also drop anaheim (56%)
-MIN_CHARS = 4           # "ca", "la", "us" are the region keep-list's job, and short terms match everywhere
+MIN_CHARS = 4  # "ca", "la", "us" are the region keep-list's job, and short terms match everywhere
 
 HEADER = """\
 # Place deny-list for the PII recognizer: every mention of these is flagged LOCATION
@@ -45,6 +44,7 @@ HEADER = """\
 
 # Counting
 
+
 def analyzed_rows(indir: str, reviewdir: str) -> Iterator[dict]:
     # only shards with a review file: an unanalyzed email would count every mention as untagged
     for path in shard_paths(indir):
@@ -57,8 +57,12 @@ def is_place_term(term: str) -> bool:
     # letters with inner spaces, dots, hyphens, apostrophes ("mt. sac"); digits are the zip rule's job
     # ASCII only: all 80 non-ASCII terms trf tagged here were newsletter phrases or foreign places,
     # and with 2-4 mentions each the share rule can't sort them out
-    return (len(term) >= MIN_CHARS and term.isascii() and term[0].isalpha()
-            and all(c.isalpha() or c in " .'-" for c in term))
+    return (
+        len(term) >= MIN_CHARS
+        and term.isascii()
+        and term[0].isalpha()
+        and all(c.isalpha() or c in " .'-" for c in term)
+    )
 
 
 def tally(spans: list[dict], rows: Iterable[dict]) -> tuple[Counter, Counter]:
@@ -88,9 +92,10 @@ def tally(spans: list[dict], rows: Iterable[dict]) -> tuple[Counter, Counter]:
 
 
 def select(mentions: Counter, tagged: Counter, common: set[str]) -> list[str]:
-    return sorted((t for t, n in mentions.items()
-                   if n >= MIN_MENTIONS and tagged[t] / n >= MIN_TAGGED_SHARE and t not in common),
-                  key=lambda t: (-mentions[t], t))
+    return sorted(
+        (t for t, n in mentions.items() if n >= MIN_MENTIONS and tagged[t] / n >= MIN_TAGGED_SHARE and t not in common),
+        key=lambda t: (-mentions[t], t),
+    )
 
 
 def split_entries(terms: list[str], english: set[str]) -> tuple[list[str], list[str]]:
@@ -107,10 +112,12 @@ def split_entries(terms: list[str], english: set[str]) -> tuple[list[str], list[
 def render(places: list[str], capitalized: list[str], mentions: Counter, tagged: Counter) -> str:
     def lines(entries):
         return "".join(f"{e:<32}# {tagged[e.lower()]}/{mentions[e.lower()]}\n" for e in entries)
+
     return f"{HEADER}\n[places]\n{lines(places)}\n[capitalized]\n{lines(capitalized)}"
 
 
 # CLI
+
 
 def parse_args(argv=None):
     ap = argparse.ArgumentParser(description="Stage 1 prep: seed the place deny-list")
@@ -125,8 +132,7 @@ def parse_args(argv=None):
 
 def run(args) -> int:
     if os.path.exists(args.out) and not args.force:
-        print(f"error: {args.out} exists and may hold your edits; pass --force to regenerate",
-              file=sys.stderr)
+        print(f"error: {args.out} exists and may hold your edits; pass --force to regenerate", file=sys.stderr)
         return 1
     spans = review_spans(args.reviewdir)
     if not spans:
@@ -144,9 +150,11 @@ def run(args) -> int:
 
     # counts only: the list is real place and venue names, keep them out of terminal scrollback
     recovered = sum(mentions[t] - tagged[t] for t in chosen)
-    print(f"{len(places):,} places, {len(capitalized):,} capitalized "
-          f"({len(mentions):,} terms trf tagged somewhere; {recovered:,} mentions it skipped now flagged) "
-          f"-> {args.out}")
+    print(
+        f"{len(places):,} places, {len(capitalized):,} capitalized "
+        f"({len(mentions):,} terms trf tagged somewhere; {recovered:,} mentions it skipped now flagged) "
+        f"-> {args.out}"
+    )
     return 0
 
 

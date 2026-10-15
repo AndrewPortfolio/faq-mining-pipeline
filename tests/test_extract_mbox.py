@@ -1,7 +1,7 @@
-#Tests for extract_mbox (Stage 0)
+# Tests for extract_mbox (Stage 0)
 
-#Fixtures are synthetic mbox files written to tmp_path --> no real PII, nothing in git
-#Envelope lines must match ENVELOPE_RE ("From <digits>@xxx ") or messages merge into one
+# Fixtures are synthetic mbox files written to tmp_path --> no real PII, nothing in git
+# Envelope lines must match ENVELOPE_RE ("From <digits>@xxx ") or messages merge into one
 
 
 import base64
@@ -13,12 +13,19 @@ import extract_mbox
 from extract_mbox import build_row, decode_part, iter_messages, main
 from shared.pipeline import Checkpoint, iter_shard_rows, shard_paths
 
-
 _ids = itertools.count(1)
 
 
-def _msg(body, *, subject="Question", sender="customer@example.com", labels="Inbox",
-         msgid=None, content_type="text/plain; charset=utf-8", headers=()):
+def _msg(
+    body,
+    *,
+    subject="Question",
+    sender="customer@example.com",
+    labels="Inbox",
+    msgid=None,
+    content_type="text/plain; charset=utf-8",
+    headers=(),
+):
     msgid = msgid or f"m{next(_ids)}"
     lines = [
         f"X-Gmail-Labels: {labels}",
@@ -35,8 +42,7 @@ def _msg(body, *, subject="Question", sender="customer@example.com", labels="Inb
 
 def _mbox(tmp_path, *messages):
     path = tmp_path / "test.mbox"
-    text = "".join(f"From {1000 + i}@xxx Mon Sep 01 10:00:00 +0000 2025\n{m}"
-                   for i, m in enumerate(messages))
+    text = "".join(f"From {1000 + i}@xxx Mon Sep 01 10:00:00 +0000 2025\n{m}" for i, m in enumerate(messages))
     path.write_bytes(text.encode("utf-8"))
     return path
 
@@ -51,8 +57,8 @@ def _run(mbox, outdir, *extra):
     return stats, list(iter_shard_rows(str(outdir)))
 
 
-#One of each outcome, with a duplicate Message-ID after the spam so it lands
-#on the far side of a --limit 3 resume
+# One of each outcome, with a duplicate Message-ID after the spam so it lands
+# on the far side of a --limit 3 resume
 MIXED = [
     _msg("Do you have availability in June?", msgid="q1"),
     _msg("Yes we do.", msgid="a1", sender="shop@example.com", labels="Sent"),
@@ -65,8 +71,8 @@ MIXED = [
 
 # decode_part
 
-class TestDecodePart:
 
+class TestDecodePart:
     def test_base64(self):
         assert decode_part(base64.b64encode("café".encode()), "base64", "utf-8") == "café"
 
@@ -74,7 +80,7 @@ class TestDecodePart:
         assert decode_part(b"caf=C3=A9", "quoted-printable", "utf-8") == "café"
 
     def test_wrong_declared_charset_falls_back(self):
-        #mislabelled charsets are common in old mail --> fall through instead of raising
+        # mislabelled charsets are common in old mail --> fall through instead of raising
         assert decode_part("café".encode("cp1252"), "", "utf-8") == "café"
 
     def test_unknown_charset_name_falls_back(self):
@@ -86,30 +92,29 @@ class TestDecodePart:
 
 # iter_messages
 
-class TestIterMessages:
 
+class TestIterMessages:
     def test_splits_on_envelope_lines(self, tmp_path):
         mbox = _mbox(tmp_path, _msg("one"), _msg("two"), _msg("three"))
         assert len(list(iter_messages(str(mbox)))) == 3
 
     def test_body_line_starting_with_from_does_not_split(self, tmp_path):
-        #only Gmail's envelope format starts a message --> prose beginning with "From" stays in the body
+        # only Gmail's envelope format starts a message --> prose beginning with "From" stays in the body
         builders = list(iter_messages(str(_mbox(tmp_path, _msg("Thanks!\nFrom the whole team")))))
         assert len(builders) == 1
         row, _ = build_row(builders[0])
         assert "From the whole team" in row["body"]
 
     def test_offsets_cover_the_file_with_no_gaps(self, tmp_path):
-        #end_offset is the resume point --> a gap skips a message on resume, an overlap re-reads one
+        # end_offset is the resume point --> a gap skips a message on resume, an overlap re-reads one
         mbox = _mbox(tmp_path, _msg("one"), _msg("two"), _msg("three"))
         builders = list(iter_messages(str(mbox)))
         assert builders[0].offset == 0
-        assert all(a.end_offset == b.offset for a, b in zip(builders, builders[1:]))
+        assert all(a.end_offset == b.offset for a, b in itertools.pairwise(builders))
         assert builders[-1].end_offset == mbox.stat().st_size
 
     def test_start_offset_skips_earlier_messages(self, tmp_path):
-        mbox = _mbox(tmp_path, _msg("one", subject="A"), _msg("two", subject="B"),
-                     _msg("three", subject="C"))
+        mbox = _mbox(tmp_path, _msg("one", subject="A"), _msg("two", subject="B"), _msg("three", subject="C"))
         start = next(iter_messages(str(mbox))).end_offset
         subjects = [str(b.headers["Subject"]) for b in iter_messages(str(mbox), start)]
         assert subjects == ["B", "C"]
@@ -117,17 +122,15 @@ class TestIterMessages:
 
 # Body extraction
 
-class TestBodyExtraction:
 
+class TestBodyExtraction:
     def test_attachment_bytes_skipped_but_recorded(self, tmp_path):
         payload = "JVBERi0xLjQK" * 6
         body = (
             "--MIX\nContent-Type: text/plain; charset=utf-8\n\nContract attached.\n"
-            "--MIX\nContent-Type: application/pdf; name=\"contract.pdf\"\n"
-            "Content-Disposition: attachment; filename=\"contract.pdf\"\n"
-            "Content-Transfer-Encoding: base64\n\n"
-            + f"{payload}\n" * 20 +
-            "--MIX--"
+            '--MIX\nContent-Type: application/pdf; name="contract.pdf"\n'
+            'Content-Disposition: attachment; filename="contract.pdf"\n'
+            "Content-Transfer-Encoding: base64\n\n" + f"{payload}\n" * 20 + "--MIX--"
         )
         row, _ = _row(tmp_path, _msg(body, content_type='multipart/mixed; boundary="MIX"'))
         assert row["body"] == "Contract attached."
@@ -147,8 +150,7 @@ class TestBodyExtraction:
         assert (row["body"], row["body_source"]) == ("Plain version", "text/plain")
 
     def test_html_only_falls_back_to_rendered_text(self, tmp_path):
-        row, _ = _row(tmp_path, _msg("<p>Hi there</p><p>Second line</p>",
-                                     content_type="text/html; charset=utf-8"))
+        row, _ = _row(tmp_path, _msg("<p>Hi there</p><p>Second line</p>", content_type="text/html; charset=utf-8"))
         assert row["body_source"] == "text/html"
         assert "<p>" not in row["body"]
         assert "Hi there" in row["body"] and "Second line" in row["body"]
@@ -161,17 +163,29 @@ class TestBodyExtraction:
 
 # build_row
 
-class TestBuildRow:
 
+class TestBuildRow:
     def test_row_shape(self, tmp_path):
-        #later stages read these keys --> a rename here breaks them without an error
-        row, reason = _row(tmp_path, _msg("How much for a 20 minute set?",
-                                          sender="Sample Person <Sample@Example.com>"))
+        # later stages read these keys --> a rename here breaks them without an error
+        row, reason = _row(tmp_path, _msg("How much for a 20 minute set?", sender="Sample Person <Sample@Example.com>"))
         assert reason is None
         assert set(row) == {
-            "id", "thrid", "date", "direction", "labels", "from", "sender", "is_automated",
-            "to", "subject", "body", "n_words", "body_source", "n_attachments",
-            "attachments", "offset",
+            "id",
+            "thrid",
+            "date",
+            "direction",
+            "labels",
+            "from",
+            "sender",
+            "is_automated",
+            "to",
+            "subject",
+            "body",
+            "n_words",
+            "body_source",
+            "n_attachments",
+            "attachments",
+            "offset",
         }
         assert row["sender"] == "sample@example.com"
         assert row["direction"] == "inbound"
@@ -186,27 +200,30 @@ class TestBuildRow:
     def test_dropped_labels(self, tmp_path, label):
         assert _row(tmp_path, _msg("hello", labels=label)) == (None, "dropped_label")
 
-    @pytest.mark.parametrize("sender,headers", [
-        ("customer@example.com", ["List-Unsubscribe: <mailto:u@example.com>"]),
-        ("customer@example.com", ["Precedence: bulk"]),
-        ("customer@example.com", ["Auto-Submitted: auto-generated"]),
-        ("noreply@example.com", []),
-        ("deals@marketing.example.com", []),
-        ("leads@bark.com", []),
-    ], ids=["list-unsubscribe", "precedence", "auto-submitted", "noreply", "marketing", "bark"])
+    @pytest.mark.parametrize(
+        "sender,headers",
+        [
+            ("customer@example.com", ["List-Unsubscribe: <mailto:u@example.com>"]),
+            ("customer@example.com", ["Precedence: bulk"]),
+            ("customer@example.com", ["Auto-Submitted: auto-generated"]),
+            ("noreply@example.com", []),
+            ("deals@marketing.example.com", []),
+            ("leads@bark.com", []),
+        ],
+        ids=["list-unsubscribe", "precedence", "auto-submitted", "noreply", "marketing", "bark"],
+    )
     def test_automated_mail_dropped(self, tmp_path, sender, headers):
         assert _row(tmp_path, _msg("hello", sender=sender, headers=headers)) == (None, "automated")
 
     def test_weddingwire_lead_kept_and_unwrapped(self, tmp_path):
-        #WeddingWire is an active lead source --> must get past the automated filter
+        # WeddingWire is an active lead source --> must get past the automated filter
         lead = "Sample Person sent you a new message:\n\nDo you travel for weddings?\n\nFor: Example Troupe"
         row, reason = _row(tmp_path, _msg(lead, sender="messages@weddingwire.com"))
         assert reason is None
         assert row["body"] == "Do you travel for weddings?"
 
     def test_keep_automated_flags_instead_of_dropping(self, tmp_path):
-        row, reason = _row(tmp_path, _msg("Big sale", sender="noreply@example.com"),
-                           keep_automated=True)
+        row, reason = _row(tmp_path, _msg("Big sale", sender="noreply@example.com"), keep_automated=True)
         assert reason is None
         assert row["is_automated"] is True
 
@@ -221,12 +238,19 @@ class TestBuildRow:
 
 # run (end to end)
 
-class TestRun:
 
+class TestRun:
     def test_mixed_mailbox(self, tmp_path):
         stats, rows = _run(_mbox(tmp_path, *MIXED), tmp_path / "out")
-        assert stats == {"read": 6, "written": 3, "inbound": 2, "outbound": 1,
-                         "dropped_label": 1, "automated": 1, "dup_id": 1}
+        assert stats == {
+            "read": 6,
+            "written": 3,
+            "inbound": 2,
+            "outbound": 1,
+            "dropped_label": 1,
+            "automated": 1,
+            "dup_id": 1,
+        }
         assert [r["id"] for r in rows] == ["<q1@example.com>", "<a1@example.com>", "<q2@example.com>"]
 
     def test_dup_body_ignores_case_and_whitespace(self, tmp_path):
@@ -242,7 +266,7 @@ class TestRun:
         assert sizes == [2, 2, 1]
 
     def test_resume_matches_uninterrupted_run(self, tmp_path):
-        #a clean stop (--limit) resumes from the checkpoint written at the end of the run
+        # a clean stop (--limit) resumes from the checkpoint written at the end of the run
         mbox = _mbox(tmp_path, *MIXED)
         full_stats, full_rows = _run(mbox, tmp_path / "full", "--shard-size", "2")
         _run(mbox, tmp_path / "resumed", "--shard-size", "2", "--limit", "3")
@@ -251,8 +275,8 @@ class TestRun:
         assert [r["id"] for r in rows] == [r["id"] for r in full_rows]
 
     def test_resume_after_crash_rewrites_unflushed_rows(self, tmp_path, monkeypatch):
-        #a crash skips the final flush/checkpoint --> resume starts from the last shard close,
-        #so the row still in the buffer when it crashed must be written again, not marked a duplicate
+        # a crash skips the final flush/checkpoint --> resume starts from the last shard close,
+        # so the row still in the buffer when it crashed must be written again, not marked a duplicate
         mbox = _mbox(tmp_path, *(_msg(f"Question number {i}") for i in range(5)))
         full_stats, full_rows = _run(mbox, tmp_path / "full")
         calls = itertools.count(1)
@@ -272,8 +296,8 @@ class TestRun:
         assert [r["id"] for r in rows] == [r["id"] for r in full_rows]
 
     def test_resume_after_ctrl_c_rereads_interrupted_message(self, tmp_path, monkeypatch):
-        #Ctrl+C can land mid-message --> resume must re-read that message, not skip it
-        #read overcounts by one per interrupt, so compare rows rather than stats
+        # Ctrl+C can land mid-message --> resume must re-read that message, not skip it
+        # read overcounts by one per interrupt, so compare rows rather than stats
         mbox = _mbox(tmp_path, *MIXED)
         _, full_rows = _run(mbox, tmp_path / "full")
         calls = itertools.count(1)
@@ -291,7 +315,7 @@ class TestRun:
         assert [r["id"] for r in rows] == [r["id"] for r in full_rows]
 
     def test_restart_ignores_previous_run(self, tmp_path):
-        #a stale seen.log would mark every row as a duplicate
+        # a stale seen.log would mark every row as a duplicate
         mbox = _mbox(tmp_path, *MIXED)
         full, _ = _run(mbox, tmp_path / "out")
         again, rows = _run(mbox, tmp_path / "out", "--restart")
@@ -299,8 +323,8 @@ class TestRun:
         assert len(rows) == full["written"]
 
     def test_limit_counts_across_resumed_runs(self, tmp_path):
-        #Documents a known quirk rather than asserting it is desirable
-        #--limit compares against the total read restored from the checkpoint, not this run's count
+        # Documents a known quirk rather than asserting it is desirable
+        # --limit compares against the total read restored from the checkpoint, not this run's count
         mbox = _mbox(tmp_path, *MIXED)
         first, _ = _run(mbox, tmp_path / "out", "--limit", "2")
         second, _ = _run(mbox, tmp_path / "out", "--limit", "2")
