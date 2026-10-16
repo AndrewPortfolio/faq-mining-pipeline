@@ -178,3 +178,25 @@ review, or noise to skip. Writes to `data/faqs/`. Nothing is deleted: a skipped 
    19 skipped. Known gap: a 255-chunk "sorry / thanks / yes" cluster passes as a candidate, because 23% of its chunks
    ask a question.
 2. Read `candidates.txt` to name FAQs, and `read_by_hand.txt` for the Vietnamese ones.
+
+## Refactor 
+### Storage Layer `src/faq_mining/shards.py`
+Moves the shard read/write helpers and `Checkpoint` out of `shared/pipeline.py` into `faq_mining/storage/shards.py`, as part of the layered refactor. `Deduper` stays in `shared/pipeline.py` for now.
+
+## Changes
+- New `faq_mining/storage/shards.py`: `shard_paths`, `iter_shard_rows`, `count_rows`, `read_shard`, `write_atomic`, `ShardWriter`, `Checkpoint`.
+- `ShardWriter.flush` and `Checkpoint.save` now call `write_atomic`; before, each repeated its own temp-file-and-rename code.
+- Repointed every caller (9 scripts and `tests/test_extract_mbox.py`) to the new module. `apply_redactions`, `pii_sample` and `seed_place_denylist` now import `write_atomic` from storage, not through `analyze_pii`.
+- `shared/pipeline.py` re-exports the moved names so open branches keep working. The refactor's Cleanup PR removes them.
+
+## Verification
+- 403 tests pass; ruff is clean.
+- A smoke run on 500 real messages (extract, PII analysis, redaction and the denylist/sample helpers) produces output identical to main's.
+- `embed`, `cluster` and `triage` changed only their imports, and their tests import them.
+
+## How `shards.py` works
+- **Reading:** `shard_paths` lists a folder's `emails-NNNNN.jsonl` files in shard order and ignores other files. The 5-digit padding makes name order match number order. `iter_shard_rows` streams rows one at a time across every shard. `read_shard` loads one whole shard, for stages that write one output per input shard, like `embed`. `count_rows` gives the total for `analyze_pii`'s progress display.
+- **Writing:** almost every output file goes through `write_atomic`, including shards, checkpoints, CSVs and reports. It writes to a `.part` file and then renames it, so a file is either complete or missing, never half-written. `ShardWriter` buffers rows and writes a shard each time `shard_size` rows have built up, plus one last partial shard at the end. `add()` returns `True` when a shard closes.
+- **Resuming:** `Checkpoint` saves a dict as JSON, loads it, or deletes it, and each stage chooses what to store. `extract_mbox` saves its mbox byte position and next shard number whenever a shard closes, so rows still in the buffer when a run dies are re-read. `analyze_pii` and `embed` skip any shard whose output file already exists, which is safe because of `write_atomic`. They use the checkpoint to carry their stats across restarts.
+
+For deeper details about the PR and how everything works: https://github.com/AndrewPortfolio/faq-mining-pipeline/pull/16#issue-5875451374 
