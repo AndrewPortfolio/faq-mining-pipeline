@@ -3,6 +3,7 @@
 # Each row is one chunk with its text, its email's metadata and its vector, so they can't drift apart
 # An email the PII tripwire fires on is never embedded; emails-NNNNN.quarantine.csv says where the hit is
 # Neither is ATLD's own unsent mail (drafts, synced notes), and quoted mail Stage 0 missed is cut off
+# Nor are the threads held out as test data (faq_mining/utils/holdout_split.py), so nothing downstream sees them
 # Usage (all Stage 2; --task only changes the prefix and the output folder):
 #     .venv/bin/python src/embed.py                          # -> data/embeddings/clustering/, Stage 3's input
 #     .venv/bin/python src/embed.py --task search_document   # -> data/embeddings/search_document/, the RAG index
@@ -27,6 +28,7 @@ import urllib.request
 
 from faq_mining import config
 from faq_mining.storage.shards import Checkpoint, iter_shard_rows, read_shard, shard_paths, write_atomic
+from faq_mining.utils import holdout_split
 from faq_mining.utils.reporting import Progress, Stats
 
 # Configuration
@@ -252,6 +254,10 @@ def embed_shard(
     # returns (output rows, quarantine rows); own holds ATLD's sender hashes
     pending, quarantine = [], []  # pending holds (row index, chunk text)
     for index, row in enumerate(rows):
+        # test threads first, so not even the quarantine file names one
+        if holdout_split.is_held_out(row.get("thrid") or ""):
+            stats["held_out"] += 1
+            continue
         hits = pii_hits(row)
         if hits:
             stats["quarantined"] += 1
@@ -353,6 +359,8 @@ def run(args) -> int:
         "target_words": TARGET_WORDS,
         "min_words": MIN_WORDS,
         "clean": CLEAN_VERSION,
+        # a new seed or share holds out other threads, so it can't mix with vectors built under the old one
+        "holdout": {"seed": holdout_split.SEED, "share": holdout_split.SHARE},
     }
 
     checkpoint = Checkpoint(os.path.join(outdir, "checkpoint.json"))

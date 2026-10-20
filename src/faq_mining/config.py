@@ -12,6 +12,7 @@ REDACTED_DIR = f"{DATA_DIR}/redacted"
 EMBEDDINGS_DIR = f"{DATA_DIR}/embeddings"
 CLUSTERS_DIR = f"{DATA_DIR}/clusters"
 FAQS_DIR = f"{DATA_DIR}/faqs"
+HOLDOUT_DIR = f"{DATA_DIR}/holdout"
 # Stage 2's clustering task writes here, and Stages 3 and 4 read it
 CLUSTERING_EMBEDDINGS_DIR = f"{EMBEDDINGS_DIR}/clustering"
 
