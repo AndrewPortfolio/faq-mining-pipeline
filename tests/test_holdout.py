@@ -1,4 +1,4 @@
-# Tests for the test holdout: the split rule (utils/holdout.py) and its stage (pipelines/holdout.py)
+# Tests for the test holdout: the split rule (utils/holdout_split.py) and its stage (pipelines/holdout.py)
 
 # Fixtures are synthetic emails written to tmp_path --> no real data, nothing in git
 
@@ -11,7 +11,7 @@ import pytest
 
 from faq_mining.pipelines import holdout
 from faq_mining.pipelines.holdout import is_auto_reply, is_reply, main, near_duplicates, pick_query
-from faq_mining.utils.holdout import is_held_out, rank
+from faq_mining.utils.holdout_split import is_held_out, rank
 
 # Under the default seed these hash into the holdout and t1-t9 don't
 HELD = ["t20", "t28", "t37", "t42", "t53", "t66", "t77", "t83", "t91"]

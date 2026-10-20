@@ -1,5 +1,5 @@
 # Test holdout: list the held-out threads' client questions to label by hand, and check none leaked downstream
-# Which threads are held out is faq_mining/utils/holdout.py's hash of the thread id. Stage 2 never embeds them, so
+# Which threads are held out is faq_mining/utils/holdout_split.py's hash of the thread id. Stage 2 never embeds them, so
 # they're only in data/redacted/, which both commands read:
 #   queries  writes data/holdout/:
 #              labels.csv  each held-out thread's first client email in a random but fixed order, lang and kind
@@ -25,7 +25,7 @@ from cluster import _when
 from embed import cut_quoted, has_content, pii_hits
 from faq_mining import config
 from faq_mining.storage.shards import iter_shard_rows, shard_paths, write_atomic
-from faq_mining.utils.holdout import SEED, SHARE, is_held_out, rank
+from faq_mining.utils.holdout_split import SEED, SHARE, is_held_out, rank
 from faq_mining.utils.reporting import Stats
 from triage import is_vietnamese
 

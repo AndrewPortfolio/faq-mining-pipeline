@@ -1,6 +1,19 @@
+## Stage 0:
+    - Data extraction of 25 GB mbox file into 15 .jsonl shards
+
+## Stage 1: 
+    - PII redaction
+
+## Stage 2: 
+    - Chunking + embedding
+    - Test holdout (README Stage 2b): embed.py skips ~10% of threads, picked by a hash of `thrid`, so they're never embedded, clustered or triaged
+        - After every re-embed / recluster / retriage: `holdout check` should find 0 held-out ids
+
+## Stage 3:
+    - UMAP + HDBSCAN for clustering
+
 ## Stage 4: 
-    - Test dataset to decide on a production model: ~10% of threads are held out by a hash of `thrid` and never embedded (Test Holdout in the README)
-        - Once the FAQs exist: `holdout queries` --> hand-label `faq` for the top ~300 rows of `data/holdout/labels.csv`, the rest is the reserve
+    - Triage noisy clusters
     - Read `candidates.txt` to name the rest of the FAQs, `read_by_hand.txt` to review possible FAQs
 
 ## Stage 5:
@@ -13,7 +26,9 @@
             - Ex. Main Topic: What's in the show?
                 - phrasings: [text: is a drummer included? from: email_<number>, text: "how many performers for instruments?" from: email_<number>]
     - Test Production Model
-        - Test queries: the labeled rows of `data/holdout/labels.csv`, openers and follow-ups scored separately
+        - Once the FAQ entries are final: `holdout queries` --> hand-label `faq` for the top ~300 rows of `data/holdout/labels.csv`, the rest is the reserve
+            - Not earlier: seeing the test questions while writing FAQs inflates the score
+        - Test queries: the labeled rows, openers and follow-ups scored separately
         - 3 Production models testing for embeddings:
             1. nomic-embed-text (768) — control, already installed + wired
             2. embeddinggemma:300m (768) — multilingual, same dim as nomic
