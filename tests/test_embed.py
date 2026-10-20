@@ -383,6 +383,17 @@ def test_atld_unsent_mail_is_not_embedded(tmp_path, monkeypatch):
     assert json.loads((outdir / "checkpoint.json").read_text(encoding="utf-8"))["stats"]["own_unsent"] == 1
 
 
+def test_held_out_test_threads_are_never_embedded(tmp_path, monkeypatch):
+    # t20 hashes into the test holdout: no vector, and not even a quarantine row naming it
+    held = {**_email(7, "Call me at 714-555-1234, how much is a lion dance?"), "thrid": "t20"}
+    indir, outdir = _setup(tmp_path, [EMAILS[0], held])
+    _, ollama = _run(monkeypatch, indir, outdir)
+    assert [r["id"] for r in _rows(outdir / "emails-00000.jsonl")] == [EMAILS[0]["id"]]
+    assert not any("lion dance?" in text for text in ollama.inputs)
+    assert not (outdir / "emails-00000.quarantine.csv").exists()
+    assert json.loads((outdir / "checkpoint.json").read_text(encoding="utf-8"))["stats"]["held_out"] == 1
+
+
 def test_quoted_mail_is_cut_before_chunking(tmp_path, monkeypatch):
     body = f"Can the drums come too? {HEADER} Hello <PERSON>, Thank you so much for choosing us!"
     indir, outdir = _setup(tmp_path, [_email(1, body)])
@@ -425,12 +436,13 @@ def test_a_different_model_needs_force(tmp_path, monkeypatch):
     assert repulled.inputs
 
 
-def test_vectors_from_before_the_cleaning_need_force(tmp_path, monkeypatch):
+@pytest.mark.parametrize("key", ["clean", "holdout"])
+def test_vectors_from_before_the_cleaning_or_the_holdout_need_force(tmp_path, monkeypatch, key):
     indir, outdir = _setup(tmp_path)
     _run(monkeypatch, indir, outdir)
     checkpoint = outdir / "checkpoint.json"
     state = json.loads(checkpoint.read_text(encoding="utf-8"))
-    del state["config"]["clean"]  # what a run from before the cleaning recorded
+    del state["config"][key]  # what a run from before the cleaning, or before the holdout, recorded
     checkpoint.write_text(json.dumps(state), encoding="utf-8")
     assert _run(monkeypatch, indir, outdir)[0] == 1
     assert _run(monkeypatch, indir, outdir, "--force")[0] == 0

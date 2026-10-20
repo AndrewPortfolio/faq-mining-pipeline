@@ -112,9 +112,12 @@ one per input shard. Each row is one chunk: its text, its email's `id`/`thrid`/`
   (`…thanks! On <DATE_TIME> at 07:23 PM, <PERSON> <<EMAIL_ADDRESS>> wrote: Hello…`), where Stage 0's
   line-anchored patterns can't see it. Everything from the header on is dropped (229 emails), often ATLD's own
   reply quoted back. The tripwire still reads the whole email first.
+- **Held-out test threads are skipped:** about a tenth of all threads (732 of 7,171), picked by a seeded hash of
+  `thrid`, are never embedded, so no later stage can see them (see Test Holdout). They're skipped before the tripwire,
+  so not even the quarantine file names one.
 - **Resumable per shard:** a shard whose output exists is skipped. `checkpoint.json` records the model
-  digest, task, chunk settings and cleaning version, and a run with different ones refuses to mix them in (`--force`
-  rebuilds). `--limit N` writes a smoke test to `<outdir>/smoke`.
+  digest, task, chunk settings, cleaning version and the holdout's seed and share, and a run with different ones
+  refuses to mix them in (`--force` rebuilds). `--limit N` writes a smoke test to `<outdir>/smoke`.
 
 ### Stage 2 workflow
 1. `ollama pull nomic-embed-text` (once), with Ollama running
@@ -149,7 +152,7 @@ pynndescent; numpy is unchanged).
 
 ### Stage 3 workflow
 1. `python src/cluster.py --sweep` — one UMAP run, 16 HDBSCAN settings compared, nothing written (~30 s)
-2. `python src/cluster.py` — defaults gave 204 clusters with 32.1% noise (~25 s, including the map's UMAP run); **TODO:** add flags to arbitrarly choose a chunk in cluster for future testing to determine prod model
+2. `python src/cluster.py` — defaults gave 204 clusters with 32.1% noise (~25 s, including the map's UMAP run)
 3. `data/clusters/clusters.html` shows the overview of the clusters and `data/clusters/report.txt` contains what each cluster says
 
 
@@ -178,6 +181,39 @@ review, or noise to skip. Writes to `data/faqs/`. Nothing is deleted: a skipped 
    19 skipped. Known gap: a 255-chunk "sorry / thanks / yes" cluster passes as a candidate, because 23% of its chunks
    ask a question.
 2. Read `candidates.txt` to name FAQs, and `read_by_hand.txt` for the Vietnamese ones.
+
+
+## Test Holdout
+Unseen test data for choosing the production embedding model. About a tenth of all threads are held out by a seeded
+sha256 of `thrid` (`faq_mining/utils/holdout.py`), and Stage 2 never embeds them. Nothing built later (clusters,
+triage, FAQs, the RAG index) can see them, with no filter for any stage to forget. They also have no cluster IDs, so
+labeling them can't lean toward nomic's view of the data. `faq_mining/pipelines/holdout.py` has two commands, both
+reading `data/redacted/`, the only place the held-out threads are:
+
+- **`check`** looks for held-out email and thread IDs in `data/embeddings`, `data/clusters` and `data/faqs` (or any
+  folders given), and prints per-file counts, never text. Any hit exits 1. It matches IDs, not text: files that show
+  text without IDs (`report.txt`, `candidates.txt`) are covered because they're built from the embeddings it checks.
+- **`queries`** writes `data/holdout/labels.csv`: each held-out thread's first client email (inbound, not ATLD's own
+  draft), unless it's a `Re:`, an auto-reply, a tripwire hit or empty. The filter is coarse on purpose, since every
+  query is read and labeled by hand.
+  - **Near-duplicates are dropped:** a query is left out if one email in another thread holds half or more of its
+    5-word runs. That catches a repeat client re-asking in a new thread, which exact-text dedupe misses. Runs found in
+    more than 20 emails (form labels, signatures) don't count. Each one's ID and its twin's go in `run.json`.
+  - **Columns:** `id`, `thrid`, `lang` (`en`/`vi`), `kind` (`opener`, or `follow_up` when ATLD's sent mail came first),
+    `faq` (blank) and `text`. `lang` and `kind` are filled in and can be corrected by hand.
+  - **Order** is random but fixed (the hash), so the top ~300 rows are the test and the rest are the reserve, for
+    topics that end up with too few.
+  - **Written once:** a rerun won't overwrite it. `--force` rewrites it, which is only safe before labeling starts.
+  - **Never** copy a `labels.csv` text into an FAQ's phrasings: that hands the model its own test.
+- **Scoring** (Stage 5) reports openers and follow-ups apart, since a follow-up can lean on context it doesn't hold.
+
+### Test Holdout workflow
+1. After every Stage 2 re-embed (the first one after the split needs `--force`), recluster and retriage, then
+   `PYTHONPATH=src .venv/bin/python -m faq_mining.pipelines.holdout check` (~10 s). It should find nothing.
+2. Once the FAQ exists, and only after any Stage 1 fix (the candidate models embed every query):
+   `PYTHONPATH=src .venv/bin/python -m faq_mining.pipelines.holdout queries` (~3 s). On today's data: 732 held-out
+   threads give 376 rows, after 80 near-duplicates.
+3. Label `faq` in `labels.csv` from the top: an FAQ entry, `none` (no FAQ answers it), or `skip` (not a real question).
 
 ## Refactor 
 ### Storage Layer `src/faq_mining/shards.py`
