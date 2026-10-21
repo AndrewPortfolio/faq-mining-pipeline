@@ -6,7 +6,7 @@
 import pytest
 
 from shared.decisions import AMBIGUOUS_THRESHOLD, DATETIME_OTHER, Rules, normalize_term
-from shared.pii_recognizers import AMBIGUOUS_ALONE, AMBIGUOUS_RECOGNIZER, AMBIGUOUS_WORD
+from shared.pii_recognizers import AMBIGUOUS_ALONE, AMBIGUOUS_KEEP, AMBIGUOUS_RECOGNIZER
 
 RULES = Rules(common_datetime=["morning", "October", "business hours"], common_location=["home"])
 
@@ -39,7 +39,7 @@ class TestAlwaysRedact:
 
 class TestAmbiguousWords:
     def test_low_score_keeps(self):
-        assert _decide("PERSON", "The", score=AMBIGUOUS_WORD, recognizer=AMBIGUOUS_RECOGNIZER) == (
+        assert _decide("PERSON", "The", score=AMBIGUOUS_KEEP, recognizer=AMBIGUOUS_RECOGNIZER) == (
             "keep",
             "ambiguous_word",
         )

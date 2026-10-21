@@ -46,24 +46,20 @@ ENTITIES = [
 CASE_INSENSITIVE = re.DOTALL | re.MULTILINE | re.IGNORECASE
 CASE_SENSITIVE = re.DOTALL | re.MULTILINE
 
-NAME_SCORE = 0.85  # same as a spaCy NER hit, so neither outranks the other in review
+# Only the [ambiguous] ladder below gates a decision (decisions.AMBIGUOUS_THRESHOLD); every other score just
+# orders review rows and picks which recognizer gets credit when two find the same span
+LIST_SCORE = 0.85  # names, venues, places: a hand or seeded list, level with a spaCy NER hit so neither outranks
+PATTERN_SCORE = 0.6  # zips, label values, policy/order numbers, dotted dates: a shape or a label anchors the match
+VENUE_NAME_SCORE = 0.5  # capitalized words ending in a venue word
+CARRIER_SCORE = 0.8  # a confirmed carrier prefix, found bare in subject lines
+EIN_SCORE = 0.4  # the shape alone is weak; "tax id" / "ein" nearby lifts it to 0.75
+LOOSE_SCORE = 0.3  # under Presidio's own phone/URL/email scores, so a span both find stays credited to theirs
 
 # [ambiguous] hits are rescored from trf's own read of the word in its sentence
 AMBIGUOUS_RECOGNIZER = "denylist_ambiguous"
-AMBIGUOUS_IN_ENTITY = 0.1  # inside a place/org/date entity: "San" in San Juan Capistrano
-AMBIGUOUS_WORD = 0.2  # tagged as an ordinary word: "The" lions, "To" confirm, "My" family
-AMBIGUOUS_ALONE = 0.6  # a proper noun on its own: "Hi An,"
+AMBIGUOUS_KEEP = 0.2  # an ordinary word ("The" lions, "To" confirm) or inside a place/org/date ("San" in San Juan)
+AMBIGUOUS_ALONE = 0.6  # a proper noun on its own ("Hi An,"): exactly AMBIGUOUS_THRESHOLD, so it still redacts
 AMBIGUOUS_PAIR = 0.85  # beside another proper noun, or inside trf's own PERSON: "Tu Nguyen"
-VENUE_SCORE = 0.85  # added by hand during review, so as trustworthy as a model hit
-PLACE_SCORE = 0.85  # trf's own majority call on the term, carried to the mentions it skipped
-ZIP_SCORE = 0.6  # every LOCATION redacts, so this only orders review rows
-VENUE_NAME_SCORE = 0.5  # every LOCATION redacts, so this only orders review rows
-EIN_SCORE = 0.4  # the shape alone is weak; "tax id" / "ein" nearby lifts it to 0.75
-POLICY_SCORE = 0.6  # the "Policy No:" label is already part of the match
-CARRIER_SCORE = 0.8  # a confirmed carrier prefix, found bare in subject lines
-ORDER_SCORE = 0.6  # the "Order #" label is already part of the match, as with policies
-DOTTED_DATE_SCORE = 0.6  # same as Presidio's own dotted pattern; DATE_TIME isn't score-gated anyway
-LOOSE_SCORE = 0.3  # under Presidio's own phone/URL/email scores, so a span both find stays credited to theirs
 
 # number + up to 4 name words + a street type, with an optional unit --> "1234 Oak St Apt 5"
 _STREET_RE = (
@@ -205,6 +201,10 @@ _VENUE_LEADING = {
 # part of a venue name, but says nothing about which one: "Elementary School" names no school
 _VENUE_GENERIC = {"Elementary", "Middle", "High", "Junior", "Main"} | set(_VENUE_WORDS)
 
+# The whole value of a "Location:"/"Venue:" form line, whatever venue it names: half the website form's Location
+# fields still held words after the name lists and trf. Line-start only, so "Dressing room location:" stays
+_LABEL_VALUE_RE = r"(?<=^[ \t]*(?:Event[ \t]+)?(?:Location|Venue)[ \t]*:[ \t]*)\S(?:[^\r\n]*\S)?"
+
 EIN_CONTEXT = ["ein", "fein", "tax", "employer", "federal", "tin"]
 POLICY_CONTEXT = ["policy", "insurance", "certificate", "coi", "coverage", "insured"]
 ORDER_CONTEXT = ["order", "invoice", "receipt", "tracking", "shipped", "purchase", "payment"]
@@ -266,7 +266,7 @@ class AmbiguousNameRecognizer(PatternRecognizer):
         doc = getattr(nlp_artifacts, "tokens", None)
         for result in results:
             score = ambiguous_score(doc, result.start, result.end)
-            if score is not None:  # nothing to read --> keeps NAME_SCORE, so the row redacts
+            if score is not None:  # nothing to read --> keeps LIST_SCORE, so the row redacts
                 result.score = score
         return results
 
@@ -281,10 +281,8 @@ def ambiguous_score(doc, start: int, end: int) -> float | None:
     label = next((e.label_ for e in doc.ents if e.start <= token.i < e.end), "")
     if label == "PERSON":
         return AMBIGUOUS_PAIR  # "My" is tagged PRON even inside "My Tran"; the entity wins
-    if label:
-        return AMBIGUOUS_IN_ENTITY
-    if token.pos_ != "PROPN":
-        return AMBIGUOUS_WORD
+    if label or token.pos_ != "PROPN":
+        return AMBIGUOUS_KEEP
     after = doc[token.i + 1] if token.i + 1 < len(doc) else None
     return AMBIGUOUS_PAIR if after is not None and after.pos_ == "PROPN" else AMBIGUOUS_ALONE
 
@@ -319,7 +317,7 @@ def name_recognizers(names: list[str], ambiguous: list[str]) -> list[PatternReco
                     supported_entity="PERSON",
                     name=f"denylist_{label}",
                     deny_list=entries,
-                    deny_list_score=NAME_SCORE,
+                    deny_list_score=LIST_SCORE,
                     global_regex_flags=flags,
                 )
             )
@@ -342,26 +340,29 @@ def pattern_recognizers() -> list[PatternRecognizer]:
         PatternRecognizer(
             supported_entity="INSURANCE_POLICY",
             name="insurance_policy",
-            patterns=[Pattern("labeled", _POLICY_RE, POLICY_SCORE), Pattern("carrier", _CARRIER_RE, CARRIER_SCORE)],
+            patterns=[Pattern("labeled", _POLICY_RE, PATTERN_SCORE), Pattern("carrier", _CARRIER_RE, CARRIER_SCORE)],
             context=POLICY_CONTEXT,
         ),
         PatternRecognizer(
             supported_entity="ORDER_ID",
             name="order_id",
-            patterns=[Pattern("labeled", _ORDER_RE, ORDER_SCORE)],
+            patterns=[Pattern("labeled", _ORDER_RE, PATTERN_SCORE)],
             context=ORDER_CONTEXT,
         ),
         # DATE_TIME, so the calendar rule redacts it
         PatternRecognizer(
             supported_entity="DATE_TIME",
             name="dotted_date",
-            patterns=[Pattern("month_first", _DOTTED_DATE_RE, DOTTED_DATE_SCORE)],
+            patterns=[Pattern("month_first", _DOTTED_DATE_RE, PATTERN_SCORE)],
         ),
         # LOCATION, so the location rule redacts it; case-sensitive so "in 92618" isn't read as Indiana
         PatternRecognizer(
             supported_entity="LOCATION",
             name="us_zip",
-            patterns=[Pattern("ca_range", _CA_ZIP_RE, ZIP_SCORE), Pattern("state_anchored", _STATE_ZIP_RE, ZIP_SCORE)],
+            patterns=[
+                Pattern("ca_range", _CA_ZIP_RE, PATTERN_SCORE),
+                Pattern("state_anchored", _STATE_ZIP_RE, PATTERN_SCORE),
+            ],
             global_regex_flags=CASE_SENSITIVE,
         ),
         # LOCATION too; case-sensitive, since the capitals are what mark a name
@@ -370,6 +371,13 @@ def pattern_recognizers() -> list[PatternRecognizer]:
             name="venue_name",
             patterns=[Pattern("venue_name", _VENUE_NAME_RE, VENUE_NAME_SCORE)],
             global_regex_flags=CASE_SENSITIVE,
+        ),
+        # LOCATION as well; the label stays readable ("Location: <LOCATION>")
+        PatternRecognizer(
+            supported_entity="LOCATION",
+            name="label_location",
+            patterns=[Pattern("label_value", _LABEL_VALUE_RE, PATTERN_SCORE)],
+            global_regex_flags=CASE_INSENSITIVE,
         ),
         # shape only, no validation: what Presidio's phone, URL and email recognizers reject
         PatternRecognizer(
@@ -389,7 +397,8 @@ def pattern_recognizers() -> list[PatternRecognizer]:
 
 
 def venue_recognizers(venues: list[str]) -> list[PatternRecognizer]:
-    # Presidio escapes deny-list entries itself, so "St. Regis" matches literally -- don't re.escape
+    # One pattern per entry, in Presidio's own deny-list form: as one alternation, a match can't overlap another,
+    # so "White Palace" ate the "Palace" of "Palace Ballroom". Escaped here, so "St. Regis" matches literally
     venues = [v for v in dict.fromkeys(venues) if v]
     if not venues:
         return []
@@ -397,8 +406,7 @@ def venue_recognizers(venues: list[str]) -> list[PatternRecognizer]:
         PatternRecognizer(
             supported_entity="LOCATION",
             name="denylist_venues",
-            deny_list=venues,
-            deny_list_score=VENUE_SCORE,
+            patterns=[Pattern("deny_list", rf"(?:^|(?<=\W))({re.escape(v)})(?:(?=\W)|$)", LIST_SCORE) for v in venues],
             global_regex_flags=CASE_INSENSITIVE,
         )
     ]
@@ -419,7 +427,7 @@ def place_recognizers(places: list[str], capitalized: list[str]) -> list[Pattern
                     supported_entity="LOCATION",
                     name=f"denylist_{label}",
                     deny_list=entries,
-                    deny_list_score=PLACE_SCORE,
+                    deny_list_score=LIST_SCORE,
                     global_regex_flags=flags,
                 )
             )

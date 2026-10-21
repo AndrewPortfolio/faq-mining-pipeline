@@ -15,22 +15,16 @@ from spacy.vocab import Vocab
 from embed import pii_hits
 from shared.pii_recognizers import (
     AMBIGUOUS_ALONE,
-    AMBIGUOUS_IN_ENTITY,
+    AMBIGUOUS_KEEP,
     AMBIGUOUS_PAIR,
     AMBIGUOUS_RECOGNIZER,
-    AMBIGUOUS_WORD,
     CARRIER_SCORE,
-    DOTTED_DATE_SCORE,
     EIN_SCORE,
     ENTITIES,
+    LIST_SCORE,
     LOOSE_SCORE,
-    NAME_SCORE,
-    ORDER_SCORE,
-    PLACE_SCORE,
-    POLICY_SCORE,
+    PATTERN_SCORE,
     VENUE_NAME_SCORE,
-    VENUE_SCORE,
-    ZIP_SCORE,
     OrderedRegistry,
     custom_recognizers,
     load_allowlist,
@@ -94,22 +88,22 @@ class TestNameRecognizers:
     def test_names_match_any_case(self):
         # lowercase names are where trf fails ("pls send to huynh"), so [names] ignores case
         recognizer = name_recognizers(["Huynh"], [])[0]
-        assert _hits(recognizer, "Huynh and huynh") == [("Huynh", NAME_SCORE), ("huynh", NAME_SCORE)]
+        assert _hits(recognizer, "Huynh and huynh") == [("Huynh", LIST_SCORE), ("huynh", LIST_SCORE)]
 
     def test_ambiguous_names_need_a_capital(self):
         # otherwise "do" fires on every question in the inbox
         _, ambiguous = name_recognizers(["Nguyen"], ["Do"])
-        assert _hits(ambiguous, "Do you do this?") == [("Do", NAME_SCORE)]
+        assert _hits(ambiguous, "Do you do this?") == [("Do", LIST_SCORE)]
 
     def test_ambiguous_hits_without_a_parse_fail_closed(self):
         # no trf read to go on --> scored like a name, so the row redacts instead of quietly keeping
         _, ambiguous = name_recognizers(["Nguyen"], ["Do"])
         assert ambiguous.name == AMBIGUOUS_RECOGNIZER
-        assert _hits(ambiguous, "Do you know Do?") == [("Do", NAME_SCORE), ("Do", NAME_SCORE)]
+        assert _hits(ambiguous, "Do you know Do?") == [("Do", LIST_SCORE), ("Do", LIST_SCORE)]
 
     def test_partial_words_are_not_matched(self):
         recognizer = name_recognizers(["Le"], [])[0]
-        assert _hits(recognizer, "Lemon Legend Le") == [("Le", NAME_SCORE)]
+        assert _hits(recognizer, "Lemon Legend Le") == [("Le", LIST_SCORE)]
 
     def test_empty_list_makes_no_recognizer(self):
         assert name_recognizers([], []) == []
@@ -148,16 +142,51 @@ class TestVenues:
         path = _write(tmp_path, "venues.txt", "# venues\nRancho Las Lomas\n\nCasa Romantica\n")
         assert load_venues(path) == ["Rancho Las Lomas", "Casa Romantica"]
         recognizer = venue_recognizers(load_venues(path))[0]
-        assert _hits(recognizer, "booked at rancho las lomas") == [("rancho las lomas", VENUE_SCORE)]
+        assert _hits(recognizer, "booked at rancho las lomas") == [("rancho las lomas", LIST_SCORE)]
 
     def test_punctuation_matches_literally(self):
         # Presidio escapes deny-list entries itself, so "." must not behave as "any character"
         recognizer = venue_recognizers(["St. Regis"])[0]
-        assert _hits(recognizer, "at St. Regis") == [("St. Regis", VENUE_SCORE)]
+        assert _hits(recognizer, "at St. Regis") == [("St. Regis", LIST_SCORE)]
         assert _hits(recognizer, "at Stx Regis") == []
+
+    def test_overlapping_entries_both_match(self):
+        # as one alternation, "White Palace" used to eat the "Palace" of "Palace Ballroom"
+        recognizer = venue_recognizers(["White Palace", "Palace Ballroom"])[0]
+        assert _hits(recognizer, "at the White Palace Ballroom") == [
+            ("Palace Ballroom", LIST_SCORE),
+            ("White Palace", LIST_SCORE),
+        ]
+
+    def test_entry_inside_another_is_one_span(self):
+        recognizer = venue_recognizers(["Palace", "White Palace"])[0]
+        assert _hits(recognizer, "at White Palace") == [("White Palace", LIST_SCORE)]
 
     def test_empty_list_makes_no_recognizer(self):
         assert venue_recognizers([]) == []
+
+
+class TestLabelLocation:
+    def test_whole_value_goes_and_the_label_stays(self):
+        # a venue no list knows is still a place when the form's label says so
+        recognizer = _named(pattern_recognizers(), "label_location")
+        text = "Name: Ann\nLocation: Sunny Acres Pavilion, Irvine CA  \nDate/Time of Event: May 5"
+        assert _hits(recognizer, text) == [("Sunny Acres Pavilion, Irvine CA", PATTERN_SCORE)]
+
+    def test_venue_and_event_location_labels_any_case(self):
+        recognizer = _named(pattern_recognizers(), "label_location")
+        assert _hits(recognizer, "Venue:Big Oak\n  event location : the park") == [
+            ("Big Oak", PATTERN_SCORE),
+            ("the park", PATTERN_SCORE),
+        ]
+
+    def test_line_start_labels_only(self):
+        recognizer = _named(pattern_recognizers(), "label_location")
+        assert _hits(recognizer, "Dressing room location: backstage\nsee my Location: notes") == []
+
+    def test_empty_values_are_ignored(self):
+        recognizer = _named(pattern_recognizers(), "label_location")
+        assert _hits(recognizer, "Location:\nLocation:   \nPhone: 1") == []
 
 
 class TestCustomRecognizers:
@@ -186,6 +215,7 @@ class TestCustomRecognizers:
             "denylist_places_capitalized",
             "us_zip",
             "venue_name",
+            "label_location",
             "order_id",
             "dotted_date",
             "loose_phone",
@@ -212,8 +242,8 @@ class TestEin:
 class TestInsurancePolicy:
     def test_labeled_number_keeps_the_label_readable(self):
         recognizer = _by_entity(pattern_recognizers(), "INSURANCE_POLICY")
-        assert _hits(recognizer, "Policy No: ABC1234567 attached") == [("ABC1234567", POLICY_SCORE)]
-        assert _hits(recognizer, "Certificate #: 2024-00017") == [("2024-00017", POLICY_SCORE)]
+        assert _hits(recognizer, "Policy No: ABC1234567 attached") == [("ABC1234567", PATTERN_SCORE)]
+        assert _hits(recognizer, "Certificate #: 2024-00017") == [("2024-00017", PATTERN_SCORE)]
 
     def test_bare_carrier_number_in_a_subject_line(self):
         recognizer = _by_entity(pattern_recognizers(), "INSURANCE_POLICY")
@@ -235,10 +265,10 @@ class TestOrderId:
         # personal purchases reached the inbox; only the number goes
         recognizer = _named(pattern_recognizers(), "order_id")
         assert _hits(recognizer, "Your order #112-3456789-1234567 has shipped") == [
-            ("112-3456789-1234567", ORDER_SCORE)
+            ("112-3456789-1234567", PATTERN_SCORE)
         ]
-        assert _hits(recognizer, "Invoice #1001 attached") == [("1001", ORDER_SCORE)]
-        assert _hits(recognizer, "tracking number 1Z999AA10123456784") == [("1Z999AA10123456784", ORDER_SCORE)]
+        assert _hits(recognizer, "Invoice #1001 attached") == [("1001", PATTERN_SCORE)]
+        assert _hits(recognizer, "tracking number 1Z999AA10123456784") == [("1Z999AA10123456784", PATTERN_SCORE)]
 
     def test_needs_four_digits_and_not_a_year(self):
         recognizer = _named(pattern_recognizers(), "order_id")
@@ -253,13 +283,13 @@ class TestDottedDate:
     def test_month_first_dates(self):
         # day-first is all Presidio knows, so "8.23.27" (day 23) never matched before
         recognizer = _named(pattern_recognizers(), "dotted_date")
-        assert _hits(recognizer, "Re: Lion Dance Wedding Performance 8.23.27") == [("8.23.27", DOTTED_DATE_SCORE)]
-        assert _hits(recognizer, "Wedding 1.11.2027") == [("1.11.2027", DOTTED_DATE_SCORE)]
+        assert _hits(recognizer, "Re: Lion Dance Wedding Performance 8.23.27") == [("8.23.27", PATTERN_SCORE)]
+        assert _hits(recognizer, "Wedding 1.11.2027") == [("1.11.2027", PATTERN_SCORE)]
 
     def test_form_text_glued_on(self):
         # html-to-text drops the break between form fields; \b would miss the date
         recognizer = _named(pattern_recognizers(), "dotted_date")
-        assert _hits(recognizer, "Date:4.5.27Time: 6pm") == [("4.5.27", DOTTED_DATE_SCORE)]
+        assert _hits(recognizer, "Date:4.5.27Time: 6pm") == [("4.5.27", PATTERN_SCORE)]
 
     def test_ignores_decimals_prices_and_addresses(self):
         recognizer = _named(pattern_recognizers(), "dotted_date")
@@ -390,13 +420,13 @@ def _scored(*tokens, tagged=True):
 
 class TestAmbiguousRescoring:
     def test_ordinary_words_score_low(self):
-        assert _scored(("The", "DET", "O"), ("lions", "NOUN", "O")) == [("The", AMBIGUOUS_WORD)]
+        assert _scored(("The", "DET", "O"), ("lions", "NOUN", "O")) == [("The", AMBIGUOUS_KEEP)]
         # followed by a verb, not a noun: the word's own tag still catches it
-        assert _scored(("To", "PART", "O"), ("confirm", "VERB", "O")) == [("To", AMBIGUOUS_WORD)]
+        assert _scored(("To", "PART", "O"), ("confirm", "VERB", "O")) == [("To", AMBIGUOUS_KEEP)]
 
-    def test_inside_a_place_scores_lowest(self):
+    def test_inside_a_place_is_kept(self):
         assert _scored(("from", "ADP", "O"), ("San", "PROPN", "B-GPE"), ("Juan", "PROPN", "I-GPE")) == [
-            ("San", AMBIGUOUS_IN_ENTITY)
+            ("San", AMBIGUOUS_KEEP)
         ]
 
     def test_lone_proper_noun_sits_on_the_threshold(self):
@@ -412,7 +442,7 @@ class TestAmbiguousRescoring:
         assert _scored(("My", "PRON", "B-PERSON"), ("Tran", "PROPN", "I-PERSON")) == [("My", AMBIGUOUS_PAIR)]
 
     def test_untagged_parse_fails_closed(self):
-        assert _scored(("The", "", "O"), ("lions", "", "O"), tagged=False) == [("The", NAME_SCORE)]
+        assert _scored(("The", "", "O"), ("lions", "", "O"), tagged=False) == [("The", LIST_SCORE)]
 
 
 # zip codes
@@ -422,15 +452,15 @@ class TestZip:
     def test_california_zips(self):
         # bare 9xxxx numbers were all zips in this inbox, with or without the state in front
         recognizer = _named(pattern_recognizers(), "us_zip")
-        assert _hits(recognizer, "Westminster, CA 92683 Thank you") == [("92683", ZIP_SCORE)]
-        assert _hits(recognizer, "Fullerton, Ca 92832 (this will") == [("92832", ZIP_SCORE)]
-        assert _hits(recognizer, "Pasadena, 91101 for the cost") == [("91101", ZIP_SCORE)]
-        assert _hits(recognizer, "Irvine, CA 92618-1234.") == [("92618-1234", ZIP_SCORE)]
+        assert _hits(recognizer, "Westminster, CA 92683 Thank you") == [("92683", PATTERN_SCORE)]
+        assert _hits(recognizer, "Fullerton, Ca 92832 (this will") == [("92832", PATTERN_SCORE)]
+        assert _hits(recognizer, "Pasadena, 91101 for the cost") == [("91101", PATTERN_SCORE)]
+        assert _hits(recognizer, "Irvine, CA 92618-1234.") == [("92618-1234", PATTERN_SCORE)]
 
     def test_other_states_need_their_code(self):
         recognizer = _named(pattern_recognizers(), "us_zip")
-        assert _hits(recognizer, "Baltimore, MD 21201") == [("21201", ZIP_SCORE)]
-        assert _hits(recognizer, "Indianapolis, IN 46204") == [("46204", ZIP_SCORE)]
+        assert _hits(recognizer, "Baltimore, MD 21201") == [("21201", PATTERN_SCORE)]
+        assert _hits(recognizer, "Indianapolis, IN 46204") == [("46204", PATTERN_SCORE)]
         # lowercase "in" is the word, not Indiana
         assert _hits(recognizer, "sold in 46204 units, ref 21201") == []
 
@@ -447,15 +477,15 @@ class TestPlaces:
     def test_any_case_section(self):
         recognizer = place_recognizers(["huntington beach"], [])[0]
         assert _hits(recognizer, "pls come to huntington beach or Huntington Beach") == [
-            ("Huntington Beach", PLACE_SCORE),
-            ("huntington beach", PLACE_SCORE),
+            ("Huntington Beach", LIST_SCORE),
+            ("huntington beach", LIST_SCORE),
         ]
 
     def test_capitalized_section_needs_the_capital(self):
         # "orange" is a lion color in this inbox; only "Orange" is the city
         recognizer = place_recognizers([], ["Orange"])[0]
         assert _hits(recognizer, "gold fur and orange accents") == []
-        assert _hits(recognizer, "a school in the City of Orange") == [("Orange", PLACE_SCORE)]
+        assert _hits(recognizer, "a school in the City of Orange") == [("Orange", LIST_SCORE)]
 
     def test_load_places_reads_both_sections(self, tmp_path):
         path = _write(
