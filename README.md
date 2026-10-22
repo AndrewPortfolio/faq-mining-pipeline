@@ -188,6 +188,10 @@ pynndescent; numpy is unchanged).
 2. `python src/cluster.py` — defaults gave 204 clusters with 32.1% noise (~25 s, including the map's UMAP run)
 3. `data/clusters/clusters.html` shows the overview of the clusters and `data/clusters/report.txt` contains what each cluster says
 
+[![FAQ clusters: the 20 biggest clusters and a map of every chunk](docs/clusters.png)](https://andrewportfolio.github.io/faq-mining-pipeline/clusters.html)
+
+*Click the image for the interactive version: hover or click a cluster on the map, or open the table of all clusters.*
+
 
 ## Stage 4: Noise Triage
 Reads Stage 3's output (`data/clusters/`) and the chunk texts, and sorts every cluster into an FAQ candidate, one to
