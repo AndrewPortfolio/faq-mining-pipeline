@@ -215,6 +215,15 @@ review, or noise to skip. Writes to `data/faqs/`. Nothing is deleted: a skipped 
    ask a question.
 2. Read `candidates.txt` to name FAQs, and `read_by_hand.txt` for the Vietnamese ones.
 
+
+## Result 
+~29,000 emails --> 166 clusters --> 127 (after triage) --> 6 FAQs found after manual reading of each cluster. The rest were either the same question split across clusters/one-off, event-specific details/junk the triage rules didn't catch
+Anything under 200,000 tokens RAG is not worth doing for datasets because the 6 questions can easily be handled in llm context window
+
+**Decision**: an auto-responder will still be made, but will follow strict deterministic templates like the chatbot. Questions falling under one of the 6 categories will be generated, anything else escalated will require human eyes. Create a log table to potentially find new FAQs. 
+
+The planned Stage 5–6 design is kept in faq_plan.md for reference.
+
 ## Refactor 
 ### Storage Layer `src/faq_mining/shards.py`
 Moves the shard read/write helpers and `Checkpoint` out of `shared/pipeline.py` into `faq_mining/storage/shards.py`, as part of the layered refactor. `Deduper` stays in `shared/pipeline.py` for now.

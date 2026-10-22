@@ -16,7 +16,12 @@
     - Triage noisy clusters
     - Read `candidates.txt` to name the rest of the FAQs, `read_by_hand.txt` to review possible FAQs
 
-## Stage 5:
+
+
+## Deprecated
+    - Pivot: after finding 6 FAQs --> no need for RAG --> store FAQs in table in DB easy lookup 
+
+### Stage 5 (DEPRECATED):
     - Group questions by answer
         - For each FAQ cluster write the answer for each question 
             - answer | escalate --> answer is known or escalate to a human rep
@@ -37,7 +42,7 @@
                 -  prefixes: gemma `task: search result | query: ` / `title: none | text: `; 
         - choose 1 of the 3 based on test results 
     
-## Stage 6:
+## Stage 6 (DEPRECATED):
     - Production (high-level overview)
         - Incoming email
             - Clean for query 
@@ -51,4 +56,5 @@
         - Reply
             - Evauluated and then logged asynchronously to track accuracy, cost, and silent degradation over time 
             - Depending on evaluation: send answer | escalate to human representative
+
                 
